@@ -23,20 +23,23 @@ export const verifyRefreshToken = (token: string) => {
 }
 
 export const attachTokens = (res: Response, accessToken: string, refreshToken: string) => {
-  const isProd = process.env.NODE_ENV === 'production'
+  const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
+  
+  const cookieOptions = {
+    httpOnly: true,
+    secure: true, // Always true for Render/HTTPS
+    sameSite: 'none' as const, // Required for cross-site cookies
+    domain: process.env.COOKIE_DOMAIN || undefined,
+  };
+
   res.cookie('access_token', accessToken, {
-    httpOnly: true,
-    maxAge: 1000 * 60 * 60 * 24, // fallback 1 day (not authoritative)
-    secure: isProd,
-    sameSite: 'lax',
-    domain: process.env.COOKIE_DOMAIN || undefined,
+    ...cookieOptions,
+    maxAge: 1000 * 60 * 60 * 24, // 1 day
   })
+  
   res.cookie('refresh_token', refreshToken, {
-    httpOnly: true,
-    maxAge: 1000 * 60 * 60 * 24 * 7, // fallback
-    secure: isProd,
-    sameSite: 'lax',
-    domain: process.env.COOKIE_DOMAIN || undefined,
+    ...cookieOptions,
+    maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
   })
 }
 
