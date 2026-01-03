@@ -99,7 +99,7 @@ export const refreshToken = catchAsync(async (req: Request, res: Response) => {
 export const updateUser = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const { id } = req.params;
-    const { name, email, password } = req.body;
+    const { name, email, password, role } = req.body;
     const user = await userModel.findById(id);
 
     if (!user) return next(new ErrorHandler("User not found", 404));
@@ -114,7 +114,19 @@ export const updateUser = catchAsync(
 
     if (name) user.name = name;
     if (password) user.password = password;
+    if (role) user.role = role as "user" | "admin";
+    
     await user.save();
+
+    await logAudit(
+      req,
+      "UPDATE",
+      "users",
+      user.id,
+      "",
+      JSON.stringify({ name, email, role })
+    );
+
     const { password: pass, ...updatedUser } = (user as any)._doc;
 
     return res.json({ success: true, updatedUser });
