@@ -9,7 +9,7 @@ import { getAreaFilter } from "../utils/areaFilter";
 export const getBeneficiaries = catchAsync(
   async (req: Request, res: Response) => {
     const user = (req as any).user;
-    const { barangay, municipality, province, search } = req.query;
+    const { barangay, municipality, province, region, search, page = 1, limit = 10 } = req.query;
 
     const query: any = {};
 
@@ -21,22 +21,41 @@ export const getBeneficiaries = catchAsync(
       }
     }
 
-    if (barangay) query.barangay = barangay;
-    if (municipality) query.municipality = municipality;
-    if (province) query.province = province;
+    if (barangay && barangay !== "all") query.barangay = barangay;
+    if (municipality && municipality !== "all") query.municipality = municipality;
+    if (province && province !== "all") query.province = province;
+    if (region && region !== "all") query.region = region;
 
     if (search) {
       const searchRegex = { $regex: search as string, $options: "i" };
-      query.$or = [
+      const searchFields = [
         { hhid: searchRegex },
         { first_name: searchRegex },
         { last_name: searchRegex },
         { pkno: searchRegex },
       ];
+      if (query.$and) {
+        query.$and.push({ $or: searchFields });
+      } else {
+        query.$or = searchFields;
+      }
     }
 
-    const beneficiaries = await Beneficiary.find(query).sort({ createdAt: -1 });
-    res.status(200).json(beneficiaries);
+    const pageNum = parseInt(page as string);
+    const limitNum = parseInt(limit as string);
+    const skip = (pageNum - 1) * limitNum;
+
+    const [beneficiaries, total] = await Promise.all([
+      Beneficiary.find(query).sort({ createdAt: -1 }).skip(skip).limit(limitNum),
+      Beneficiary.countDocuments(query)
+    ]);
+
+    res.status(200).json({
+      beneficiaries,
+      total,
+      page: pageNum,
+      totalPages: Math.ceil(total / limitNum)
+    });
   }
 );
 
@@ -45,6 +64,25 @@ export const createBeneficiary = catchAsync(
     const existing = await Beneficiary.findOne({ hhid: req.body.hhid });
     if (existing) {
       return next(new ErrorHandler("HHID already exists", 400));
+    }
+
+    // Auto-populate region if missing but province is present
+    if (!req.body.region && req.body.province) {
+      if (req.body.province.toUpperCase() === "CITY OF BACOLOD") {
+        req.body.region = "NEGROS ISLAND REGION (NIR)";
+      } else {
+        const provinceArea = await Area.findOne({ 
+          name: { $regex: new RegExp(`^${req.body.province}$`, "i") }, 
+          type: "province" 
+        }).populate("parent_id");
+        
+        if (provinceArea && provinceArea.parent_id && (provinceArea.parent_id as any).name) {
+          req.body.region = (provinceArea.parent_id as any).name;
+        } else if (provinceArea && provinceArea.parent_code) {
+          const regionArea = await Area.findOne({ code: provinceArea.parent_code, type: "region" });
+          if (regionArea) req.body.region = regionArea.name;
+        }
+      }
     }
 
     const beneficiary = await Beneficiary.create(req.body);
@@ -58,6 +96,25 @@ export const updateBeneficiary = catchAsync(
     const beneficiary = await Beneficiary.findById(req.params.id);
     if (!beneficiary) {
       return next(new ErrorHandler("Beneficiary not found", 404));
+    }
+
+    // Auto-populate region if province is changed but region is not provided or needs update
+    if (req.body.province && (req.body.province !== beneficiary.province || !beneficiary.region)) {
+      if (req.body.province.toUpperCase() === "CITY OF BACOLOD") {
+        req.body.region = "NEGROS ISLAND REGION (NIR)";
+      } else {
+        const provinceArea = await Area.findOne({ 
+          name: { $regex: new RegExp(`^${req.body.province}$`, "i") }, 
+          type: "province" 
+        }).populate("parent_id");
+        
+        if (provinceArea && provinceArea.parent_id && (provinceArea.parent_id as any).name) {
+          req.body.region = (provinceArea.parent_id as any).name;
+        } else if (provinceArea && provinceArea.parent_code) {
+          const regionArea = await Area.findOne({ code: provinceArea.parent_code, type: "region" });
+          if (regionArea) req.body.region = regionArea.name;
+        }
+      }
     }
 
     Object.assign(beneficiary, req.body);

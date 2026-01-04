@@ -9,12 +9,22 @@ import { getAreaFilter } from "../utils/areaFilter";
 export const getRedemptions = catchAsync(
   async (req: Request, res: Response) => {
     const user = (req as any).user;
-    const { beneficiary_id, hhid, frm_period } = req.query;
+    const { beneficiary_id, beneficiary_ids, hhid, frm_period, page = 1, limit = 10, search } = req.query;
 
     const query: any = {};
     if (beneficiary_id) query.beneficiary_id = beneficiary_id;
+    if (beneficiary_ids) {
+      query.beneficiary_id = { $in: (beneficiary_ids as string).split(",") };
+    }
     if (hhid) query.hhid = hhid;
     if (frm_period) query.frm_period = frm_period;
+
+    if (search) {
+      query.$or = [
+        { hhid: { $regex: search as string, $options: "i" } },
+        { frm_period: { $regex: search as string, $options: "i" } }
+      ];
+    }
 
     if (user.role !== "admin" && user.assigned_areas && user.assigned_areas.length > 0) {
       const areaFilter = await getAreaFilter(user.assigned_areas);
@@ -23,18 +33,33 @@ export const getRedemptions = catchAsync(
       const allowedHhids = beneficiaries.map((b) => b.hhid);
 
       if (query.hhid) {
-        if (!allowedHhids.includes(query.hhid)) {
-          return res.status(200).json([]);
+        if (typeof query.hhid === 'string' && !allowedHhids.includes(query.hhid)) {
+          return res.status(200).json({ redemptions: [], total: 0, page: 1, totalPages: 0 });
         }
       } else {
         query.hhid = { $in: allowedHhids };
       }
     }
 
-    const redemptions = await Redemption.find(query)
-      .populate("recorded_by", "name email")
-      .sort({ createdAt: -1 });
-    res.status(200).json(redemptions);
+    const pageNum = parseInt(page as string);
+    const limitNum = parseInt(limit as string);
+    const skip = (pageNum - 1) * limitNum;
+
+    const [redemptions, total] = await Promise.all([
+      Redemption.find(query)
+        .populate("recorded_by", "name email")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum),
+      Redemption.countDocuments(query)
+    ]);
+
+    res.status(200).json({
+      redemptions,
+      total,
+      page: pageNum,
+      totalPages: Math.ceil(total / limitNum)
+    });
   }
 );
 

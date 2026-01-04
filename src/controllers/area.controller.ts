@@ -6,23 +6,59 @@ import { logAudit } from "../utils/auditLogger";
 
 export const getAreas = catchAsync(
   async (req: Request, res: Response) => {
-    const { type, parent_id, search } = req.query;
+    const { type, parent_id, parent_code, search, code, page = 1, limit = 100, sort = "code", order = "asc" } = req.query;
 
     const query: any = {};
     if (type) query.type = (type as string).toLowerCase();
+    if (code) query.code = code;
+    if (parent_code) query.parent_code = parent_code;
+    
     if (parent_id === "null") {
       query.parent_id = null;
     } else if (parent_id) {
       query.parent_id = parent_id;
     }
+    
     if (search) {
-      query.name = { $regex: search as string, $options: "i" };
+      query.$or = [
+        { name: { $regex: search as string, $options: "i" } },
+        { code: { $regex: search as string, $options: "i" } }
+      ];
     }
 
-    const areas = await Area.find(query)
-      .populate("parent_id", "name")
-      .sort({ createdAt: -1 });
-    res.status(200).json(areas);
+    const sortOrder = order === "desc" ? -1 : 1;
+    const sortOptions: any = {};
+    sortOptions[sort as string] = sortOrder;
+    // Add secondary sort for stability
+    if (sort !== "code") sortOptions["code"] = 1;
+
+    // If limit is "all", don't paginate (be careful with this for large datasets)
+    if (limit === "all") {
+      const areas = await Area.find(query)
+        .populate("parent_id", "name code")
+        .sort(sortOptions);
+      return res.status(200).json(areas);
+    }
+
+    const pageNum = parseInt(page as string);
+    const limitNum = parseInt(limit as string);
+    const skip = (pageNum - 1) * limitNum;
+
+    const [areas, total] = await Promise.all([
+      Area.find(query)
+        .populate("parent_id", "name code")
+        .sort(sortOptions)
+        .skip(skip)
+        .limit(limitNum),
+      Area.countDocuments(query)
+    ]);
+
+    res.status(200).json({
+      areas,
+      total,
+      page: pageNum,
+      totalPages: Math.ceil(total / limitNum)
+    });
   }
 );
 

@@ -155,13 +155,40 @@ export const getMe = catchAsync(
 
 export const getuser = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
-    // Return all users (including the current user) for admin management
-    const user = await userModel
-      .find()
-      .select("-password")
-      .sort({ createdAt: -1 });
-    const countUser = await userModel.countDocuments();
-    res.status(200).json({ success: true, countUser, user });
+    const { page = 1, limit = 10, search, status } = req.query;
+
+    const query: any = {};
+    if (search) {
+      query.$or = [
+        { name: { $regex: search as string, $options: "i" } },
+        { email: { $regex: search as string, $options: "i" } },
+      ];
+    }
+    if (status) {
+      query.status = status;
+    }
+
+    const pageNum = parseInt(page as string);
+    const limitNum = parseInt(limit as string);
+    const skip = (pageNum - 1) * limitNum;
+
+    const [users, total] = await Promise.all([
+      userModel
+        .find(query)
+        .select("-password")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limitNum),
+      userModel.countDocuments(query),
+    ]);
+
+    res.status(200).json({
+      success: true,
+      total,
+      users,
+      page: pageNum,
+      totalPages: Math.ceil(total / limitNum),
+    });
   }
 );
 

@@ -5,15 +5,19 @@ export const getAreaFilter = async (assigned_areas: string[]) => {
     return null;
   }
 
-  // Find areas by ID or name (for backward compatibility)
+  // Find areas by ID, name, or code
   const assignedAreas = await Area.find({
     $or: [
       { _id: { $in: assigned_areas.filter((id: string) => id.match(/^[0-9a-fA-F]{24}$/)) } },
+      { code: { $in: assigned_areas } },
       { name: { $in: assigned_areas } }
     ]
   }).populate({
     path: 'parent_id',
-    populate: { path: 'parent_id' }
+    populate: { 
+      path: 'parent_id',
+      populate: { path: 'parent_id' }
+    }
   });
 
   if (assignedAreas.length === 0) {
@@ -22,12 +26,20 @@ export const getAreaFilter = async (assigned_areas: string[]) => {
 
   const orConditions = assignedAreas.map(area => {
     const condition: any = {};
-    if (area.type === 'province') {
+    if (area.type === 'region') {
+      condition.region = area.name;
+    } else if (area.type === 'province') {
       condition.province = area.name;
+      if (area.parent_id) {
+        condition.region = (area.parent_id as any).name;
+      }
     } else if (area.type === 'municipality') {
       condition.municipality = area.name;
       if (area.parent_id) {
         condition.province = (area.parent_id as any).name;
+        if ((area.parent_id as any).parent_id) {
+          condition.region = ((area.parent_id as any).parent_id as any).name;
+        }
       }
     } else if (area.type === 'barangay') {
       condition.barangay = area.name;
@@ -35,6 +47,9 @@ export const getAreaFilter = async (assigned_areas: string[]) => {
         condition.municipality = (area.parent_id as any).name;
         if ((area.parent_id as any).parent_id) {
           condition.province = ((area.parent_id as any).parent_id as any).name;
+          if (((area.parent_id as any).parent_id as any).parent_id) {
+            condition.region = (((area.parent_id as any).parent_id as any).parent_id as any).name;
+          }
         }
       }
     }
