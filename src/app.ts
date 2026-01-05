@@ -43,6 +43,10 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
 }))
+app.use(cors({
+  origin: 'https://ibms-server-self.vercel.app',
+  credentials: true
+}));
 app.use(express.json({ limit: '300mb' }))
 app.use(express.urlencoded({ limit: '300mb', extended: true }))
 app.use(cookieParser())
