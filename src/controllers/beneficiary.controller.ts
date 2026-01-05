@@ -208,9 +208,50 @@ export const deleteBeneficiary = catchAsync(
       return next(new ErrorHandler("Beneficiary not found", 404));
     }
 
-    await logAudit(req, "DELETE", "beneficiaries", beneficiary.id, JSON.stringify(beneficiary), "");
+    await logAudit(req, "DELETE", "beneficiaries", req.params.id, "", "Deleted single beneficiary");
 
-    res.status(200).json({ message: "Beneficiary deleted", beneficiary });
+    res.status(204).json({ success: true });
+  }
+);
+
+export const bulkDeleteBeneficiaries = catchAsync(
+  async (req: Request, res: Response, next: NextFunction) => {
+    const { ids, all, filters } = req.body;
+
+    let deleteQuery: any = {};
+
+    if (all) {
+      // If deleting all based on filters
+      if (filters) {
+        if (filters.search) {
+          deleteQuery.$or = [
+            { hhid: { $regex: filters.search, $options: "i" } },
+            { pkno: { $regex: filters.search, $options: "i" } },
+            { first_name: { $regex: filters.search, $options: "i" } },
+            { last_name: { $regex: filters.search, $options: "i" } },
+          ];
+        }
+        if (filters.region && filters.region !== "all") deleteQuery.region = filters.region;
+        if (filters.province && filters.province !== "all") deleteQuery.province = filters.province;
+        if (filters.municipality && filters.municipality !== "all") deleteQuery.municipality = filters.municipality;
+        if (filters.barangay && filters.barangay !== "all") deleteQuery.barangay = filters.barangay;
+      }
+    } else {
+      // If deleting specific IDs
+      if (!ids || !Array.isArray(ids) || ids.length === 0) {
+        return next(new ErrorHandler("No IDs provided for deletion", 400));
+      }
+      deleteQuery = { _id: { $in: ids } };
+    }
+
+    const result = await Beneficiary.deleteMany(deleteQuery);
+
+    await logAudit(req, "BULK_DELETE", "beneficiaries", "multiple", "", `Deleted ${result.deletedCount} beneficiaries`);
+
+    res.status(200).json({
+      success: true,
+      count: result.deletedCount,
+    });
   }
 );
 
