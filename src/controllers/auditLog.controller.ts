@@ -19,6 +19,11 @@ export const getAuditLogs = catchAsync(
       ];
     }
 
+    if (limit === "all") {
+      const logs = await AuditLog.find(query).sort({ createdAt: -1 });
+      return res.status(200).json({ logs, total: logs.length });
+    }
+
     const pageNum = parseInt(page as string);
     const limitNum = parseInt(limit as string);
     const skip = (pageNum - 1) * limitNum;

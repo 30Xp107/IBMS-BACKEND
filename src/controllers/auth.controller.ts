@@ -168,6 +168,15 @@ export const getuser = catchAsync(
       query.status = status;
     }
 
+    if (limit === "all") {
+      const users = await userModel
+        .find(query)
+        .select("-password")
+        .populate("assigned_areas", "name")
+        .sort({ createdAt: -1 });
+      return res.status(200).json({ success: true, users, total: users.length });
+    }
+
     const pageNum = parseInt(page as string);
     const limitNum = parseInt(limit as string);
     const skip = (pageNum - 1) * limitNum;
@@ -176,6 +185,7 @@ export const getuser = catchAsync(
       userModel
         .find(query)
         .select("-password")
+        .populate("assigned_areas", "name")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limitNum),
@@ -217,7 +227,7 @@ export const approveUser = catchAsync(
       JSON.stringify({ status, assigned_areas, role })
     );
 
-    const updatedUser = await userModel.findById(id).select("-password");
+    const updatedUser = await userModel.findById(id).select("-password").populate("assigned_areas", "name");
     res.status(200).json({ success: true, user: updatedUser });
   }
 );

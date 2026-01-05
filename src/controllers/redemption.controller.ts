@@ -41,6 +41,13 @@ export const getRedemptions = catchAsync(
       }
     }
 
+    if (limit === "all") {
+      const redemptions = await Redemption.find(query)
+        .populate("recorded_by", "name email")
+        .sort({ createdAt: -1 });
+      return res.status(200).json({ redemptions, total: redemptions.length });
+    }
+
     const pageNum = parseInt(page as string);
     const limitNum = parseInt(limit as string);
     const skip = (pageNum - 1) * limitNum;

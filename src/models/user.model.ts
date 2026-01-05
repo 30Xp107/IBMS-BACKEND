@@ -9,7 +9,7 @@ export interface IUser extends Document {
     password: string
     role: 'user' | 'admin'
     status?: 'pending' | 'approved' | 'rejected'
-    assigned_areas?: string[]
+    assigned_areas?: any[]
     _doc?: any
     comparePassword: (candidatee: string) => Promise<boolean>
     createdAt: Date;
@@ -42,7 +42,8 @@ const userSchema = new Schema<IUser>({
         default: 'pending'
     },
     assigned_areas: {
-        type: [String],
+        type: [Schema.Types.ObjectId],
+        ref: 'Area',
         default: []
     }
 }, {timestamps: true} )

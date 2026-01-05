@@ -41,6 +41,11 @@ export const getBeneficiaries = catchAsync(
       }
     }
 
+    if (limit === "all") {
+      const beneficiaries = await Beneficiary.find(query).sort({ createdAt: -1 });
+      return res.status(200).json({ beneficiaries, total: beneficiaries.length });
+    }
+
     const pageNum = parseInt(page as string);
     const limitNum = parseInt(limit as string);
     const skip = (pageNum - 1) * limitNum;
