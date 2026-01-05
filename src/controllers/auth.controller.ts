@@ -17,7 +17,7 @@ export const register = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const { name, email, password } = req.body;
     const existing = await userModel.findOne({ email });
-    if (existing) return next(new ErrorHandler("Email Already Used", 400));
+    if (existing) return next(new ErrorHandler("Email Already Used", 400)); 
     // Create user with default status "pending" - they cannot login until approved
     await userModel.create({ name, email, password });
     // Don't log them in - they need admin approval first
