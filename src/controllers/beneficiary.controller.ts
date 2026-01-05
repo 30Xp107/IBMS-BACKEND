@@ -96,6 +96,54 @@ export const createBeneficiary = catchAsync(
   }
 );
 
+export const bulkCreateBeneficiaries = catchAsync(
+  async (req: Request, res: Response, next: NextFunction) => {
+    const { beneficiaries } = req.body;
+    if (!beneficiaries || !Array.isArray(beneficiaries)) {
+      return next(new ErrorHandler("Invalid beneficiaries data", 400));
+    }
+
+    const results = {
+      success: 0,
+      failed: 0,
+      errors: [] as string[]
+    };
+
+    // Split into chunks of 1000 for better performance and to avoid memory issues
+    const chunkSize = 1000;
+    for (let i = 0; i < beneficiaries.length; i += chunkSize) {
+      const chunk = beneficiaries.slice(i, i + chunkSize);
+      
+      try {
+        // Use insertMany with ordered: false to continue even if some fail
+        await Beneficiary.insertMany(chunk, { ordered: false });
+        results.success += chunk.length;
+      } catch (error: any) {
+        console.error("Bulk import error details:", JSON.stringify(error, null, 2));
+        
+        // Handle errors (e.g., duplicates if not caught earlier)
+        if (error.writeErrors) {
+          results.success += (chunk.length - error.writeErrors.length);
+          results.failed += error.writeErrors.length;
+          // Collect sample errors for the response
+          if (results.errors.length < 10) {
+            error.writeErrors.slice(0, 5).forEach((err: any) => {
+              results.errors.push(`Row ${err.index}: ${err.errmsg || 'Unknown validation error'}`);
+            });
+          }
+        } else {
+          results.failed += chunk.length;
+          results.errors.push(error.message || "Unknown database error");
+        }
+      }
+    }
+
+    await logAudit(req, "BULK_CREATE", "beneficiaries", "multiple", "", `Imported ${results.success} beneficiaries, ${results.failed} failed`);
+
+    res.status(201).json(results);
+  }
+);
+
 export const checkDuplicates = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const { hhids } = req.body;
@@ -103,9 +151,17 @@ export const checkDuplicates = catchAsync(
       return next(new ErrorHandler("Invalid request body", 400));
     }
 
-    const existing = await Beneficiary.find({ hhid: { $in: hhids } }, "hhid first_name last_name");
+    const duplicates: any[] = [];
+    const chunkSize = 5000;
+    
+    for (let i = 0; i < hhids.length; i += chunkSize) {
+      const chunk = hhids.slice(i, i + chunkSize);
+      const existing = await Beneficiary.find({ hhid: { $in: chunk } }, "hhid first_name last_name");
+      duplicates.push(...existing);
+    }
+
     res.status(200).json({
-      duplicates: existing
+      duplicates
     });
   }
 );
