@@ -1,6 +1,7 @@
 import express from "express";
 import {
   createBeneficiary,
+  checkDuplicates,
   deleteBeneficiary,
   getBeneficiaries,
   updateBeneficiary,
@@ -11,6 +12,7 @@ const router = express.Router();
 
 router.get("/", isAuthenticated, getBeneficiaries);
 router.post("/", isAuthenticated, authorizeRoles("admin"), createBeneficiary);
+router.post("/check-duplicates", isAuthenticated, authorizeRoles("admin"), checkDuplicates);
 router.put("/:id", isAuthenticated, authorizeRoles("admin"), updateBeneficiary);
 router.delete("/:id", isAuthenticated, authorizeRoles("admin"), deleteBeneficiary);
 

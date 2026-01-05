@@ -12,6 +12,7 @@ import nesRoute from './routes/nes.route'
 import areaRoute from './routes/area.route'
 import userRoute from './routes/user.route'
 import auditLogRoute from './routes/auditLog.route'
+import systemConfigRoute from './routes/systemConfig.route'
 import { errorHandler } from './middleware/error'
 
 export const app = express()
@@ -55,6 +56,7 @@ app.use('/api/nes', nesRoute)
 app.use('/api/areas', areaRoute)
 app.use('/api/users', userRoute)
 app.use('/api/audit-logs', auditLogRoute)
+app.use('/api/system-configs', systemConfigRoute)
 
 app.get('/test', (req, res) => res.json({ success: true }))
 

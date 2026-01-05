@@ -96,6 +96,20 @@ export const createBeneficiary = catchAsync(
   }
 );
 
+export const checkDuplicates = catchAsync(
+  async (req: Request, res: Response, next: NextFunction) => {
+    const { hhids } = req.body;
+    if (!hhids || !Array.isArray(hhids)) {
+      return next(new ErrorHandler("Invalid request body", 400));
+    }
+
+    const existing = await Beneficiary.find({ hhid: { $in: hhids } }, "hhid first_name last_name");
+    res.status(200).json({
+      duplicates: existing
+    });
+  }
+);
+
 export const updateBeneficiary = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const beneficiary = await Beneficiary.findById(req.params.id);
