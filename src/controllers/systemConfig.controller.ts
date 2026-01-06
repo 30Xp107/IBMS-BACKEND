@@ -16,7 +16,7 @@ export const getConfig = catchAsync(
         key,
         value: {
           hhid: true,
-          pkno: true,
+          pkno: false,
           first_name: true,
           last_name: true,
           birthdate: false,

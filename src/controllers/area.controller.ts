@@ -11,19 +11,35 @@ export const getAreas = catchAsync(
     const query: any = {};
     if (type) query.type = (type as string).toLowerCase();
     if (code) query.code = code;
-    if (parent_code) query.parent_code = parent_code;
     
-    if (parent_id === "null") {
-      query.parent_id = null;
-    } else if (parent_id) {
-      query.parent_id = parent_id;
+    // Handle parent filtering more robustly
+    if (parent_id || parent_code) {
+      const parentConditions: any[] = [];
+      if (parent_code) parentConditions.push({ parent_code });
+      if (parent_id === "null") {
+        parentConditions.push({ parent_id: null });
+      } else if (parent_id) {
+        parentConditions.push({ parent_id });
+      }
+      
+      if (parentConditions.length > 0) {
+        query.$and = query.$and || [];
+        query.$and.push({ $or: parentConditions });
+      }
     }
     
     if (search) {
-      query.$or = [
-        { name: { $regex: search as string, $options: "i" } },
-        { code: { $regex: search as string, $options: "i" } }
-      ];
+      const searchCondition = {
+        $or: [
+          { name: { $regex: search as string, $options: "i" } },
+          { code: { $regex: search as string, $options: "i" } }
+        ]
+      };
+      if (query.$and) {
+        query.$and.push(searchCondition);
+      } else {
+        query.$or = searchCondition.$or;
+      }
     }
 
     const sortOrder = order === "desc" ? -1 : 1;

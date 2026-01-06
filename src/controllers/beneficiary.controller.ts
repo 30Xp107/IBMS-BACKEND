@@ -21,10 +21,18 @@ export const getBeneficiaries = catchAsync(
       }
     }
 
-    if (barangay && barangay !== "all") query.barangay = barangay;
-    if (municipality && municipality !== "all") query.municipality = municipality;
-    if (province && province !== "all") query.province = province;
-    if (region && region !== "all") query.region = region;
+    if (barangay && barangay !== "all") {
+      query.barangay = { $regex: new RegExp(`^${(barangay as string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") };
+    }
+    if (municipality && municipality !== "all") {
+      query.municipality = { $regex: new RegExp(`^${(municipality as string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") };
+    }
+    if (province && province !== "all") {
+      query.province = { $regex: new RegExp(`^${(province as string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") };
+    }
+    if (region && region !== "all") {
+      query.region = { $regex: new RegExp(`^${(region as string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") };
+    }
 
     if (search) {
       const searchRegex = { $regex: search as string, $options: "i" };
@@ -66,18 +74,13 @@ export const getBeneficiaries = catchAsync(
 
 export const createBeneficiary = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
-    const existing = await Beneficiary.findOne({ hhid: req.body.hhid });
-    if (existing) {
-      return next(new ErrorHandler("HHID already exists", 400));
-    }
-
-    // Auto-populate region if missing but province is present
-    if (!req.body.region && req.body.province) {
+    // Auto-populate region if province is provided but region is missing
+    if (req.body.province && !req.body.region) {
       if (req.body.province.toUpperCase() === "CITY OF BACOLOD") {
         req.body.region = "NEGROS ISLAND REGION (NIR)";
       } else {
         const provinceArea = await Area.findOne({ 
-          name: { $regex: new RegExp(`^${req.body.province}$`, "i") }, 
+          name: { $regex: new RegExp(`^${(req.body.province as string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") }, 
           type: "province" 
         }).populate("parent_id");
         
@@ -111,29 +114,95 @@ export const bulkCreateBeneficiaries = catchAsync(
 
     // Split into chunks of 1000 for better performance and to avoid memory issues
     const chunkSize = 1000;
+    const regionCache = new Map<string, string>();
+
     for (let i = 0; i < beneficiaries.length; i += chunkSize) {
       const chunk = beneficiaries.slice(i, i + chunkSize);
       
-      try {
-        // Use insertMany with ordered: false to continue even if some fail
-        await Beneficiary.insertMany(chunk, { ordered: false });
-        results.success += chunk.length;
-      } catch (error: any) {
-        console.error("Bulk import error details:", JSON.stringify(error, null, 2));
+      // 1. Auto-populate missing regions & Validate each document
+      const validDocs: any[] = [];
+      
+      for (let j = 0; j < chunk.length; j++) {
+        const b = chunk[j];
         
-        // Handle errors (e.g., duplicates if not caught earlier)
-        if (error.writeErrors) {
-          results.success += (chunk.length - error.writeErrors.length);
-          results.failed += error.writeErrors.length;
-          // Collect sample errors for the response
-          if (results.errors.length < 10) {
-            error.writeErrors.slice(0, 5).forEach((err: any) => {
-              results.errors.push(`Row ${err.index}: ${err.errmsg || 'Unknown validation error'}`);
-            });
+        // Auto-populate missing regions
+        if (b.province && !b.region) {
+          const provinceKey = b.province.toUpperCase();
+          if (regionCache.has(provinceKey)) {
+            b.region = regionCache.get(provinceKey);
+          } else if (provinceKey === "CITY OF BACOLOD") {
+            const region = "NEGROS ISLAND REGION (NIR)";
+            b.region = region;
+            regionCache.set(provinceKey, region);
+          } else {
+            const provinceArea = await Area.findOne({ 
+                name: { $regex: new RegExp(`^${(b.province as string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") }, 
+                type: "province" 
+              }).populate("parent_id");
+            
+            if (provinceArea) {
+              let regionName = "";
+              if (provinceArea.parent_id && (provinceArea.parent_id as any).name) {
+                regionName = (provinceArea.parent_id as any).name;
+              } else if (provinceArea.parent_code) {
+                const regionArea = await Area.findOne({ code: provinceArea.parent_code, type: "region" });
+                if (regionArea) regionName = regionArea.name;
+              }
+              
+              if (regionName) {
+                b.region = regionName;
+                regionCache.set(provinceKey, regionName);
+              }
+            }
+          }
+        }
+
+        // Validate sync
+        const doc = new Beneficiary(b);
+        const validationError = doc.validateSync();
+        
+        if (validationError) {
+          results.failed++;
+          if (results.errors.length < 50) {
+            const errorMsgs = Object.values(validationError.errors).map(e => e.message).join(", ");
+            results.errors.push(`Row ${i + j + 1}: ${errorMsgs}`);
           }
         } else {
-          results.failed += chunk.length;
-          results.errors.push(error.message || "Unknown database error");
+          validDocs.push(b);
+        }
+      }
+      
+      if (validDocs.length === 0) continue;
+
+      try {
+        // Use insertMany with ordered: false to continue even if some fail (e.g. database duplicates)
+        // We already did Mongoose validation, but using Beneficiary.insertMany is safer and still fast with ordered: false.
+        await Beneficiary.insertMany(validDocs, { ordered: false });
+        results.success += validDocs.length;
+      } catch (error: any) {
+        // Handle database errors (mostly duplicates if index still exists)
+        if (error.writeErrors) {
+          const writeErrorCount = error.writeErrors.length;
+          results.success += (validDocs.length - writeErrorCount);
+          results.failed += writeErrorCount;
+          
+          error.writeErrors.forEach((err: any) => {
+            if (results.errors.length < 50) {
+              let msg = err.errmsg || 'Unknown database error';
+              if (msg.includes('E11000') || msg.includes('duplicate key')) {
+                const hhidMatch = msg.match(/hhid: "([^"]+)"/);
+                const hhid = hhidMatch ? hhidMatch[1] : (err.op?.hhid || 'unknown');
+                msg = `Duplicate HHID in database: ${hhid}`;
+              }
+              results.errors.push(`Row ${i + (err.index || 0) + 1}: ${msg}`);
+            }
+          });
+        } else {
+          // General error for the whole chunk
+          results.failed += validDocs.length;
+          if (results.errors.length < 50) {
+            results.errors.push(`Chunk starting at row ${i + 1}: ${error.message || 'Unknown error'}`);
+          }
         }
       }
     }
@@ -179,7 +248,7 @@ export const updateBeneficiary = catchAsync(
         req.body.region = "NEGROS ISLAND REGION (NIR)";
       } else {
         const provinceArea = await Area.findOne({ 
-          name: { $regex: new RegExp(`^${req.body.province}$`, "i") }, 
+          name: { $regex: new RegExp(`^${(req.body.province as string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") }, 
           type: "province" 
         }).populate("parent_id");
         

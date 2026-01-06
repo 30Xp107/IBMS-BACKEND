@@ -147,7 +147,9 @@ export const getMe = catchAsync(
         email: user.email,
         role: user.role,
         status: user.status,
-        assigned_areas: user.assigned_areas || [],
+        assigned_areas: (user.assigned_areas || []).map((area: any) => 
+          typeof area === 'object' ? area.name : area
+        ),
       },
     });
   }
@@ -213,7 +215,12 @@ export const approveUser = catchAsync(
     }
 
     if (status) user.status = status as "pending" | "approved" | "rejected";
-    if (assigned_areas) user.assigned_areas = assigned_areas;
+    if (assigned_areas && Array.isArray(assigned_areas)) {
+      // Filter out invalid IDs and remove duplicates
+      const uniqueAreas = [...new Set(assigned_areas)]
+        .filter(areaId => areaId && typeof areaId === 'string' && areaId.match(/^[0-9a-fA-F]{24}$/));
+      user.assigned_areas = uniqueAreas;
+    }
     if (role) user.role = role as "user" | "admin";
 
     await user.save();

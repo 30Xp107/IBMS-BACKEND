@@ -23,7 +23,7 @@ export const isAuthenticated = async (
         .status(401)
         .json({ success: false, message: "Not authenticated" });
     const decoded = jwt.verify(token, ACCESS_SECRET) as any;
-    const user = await userModel.findById(decoded.id).select("-password");
+    const user = await userModel.findById(decoded.id).select("-password").populate("assigned_areas", "name");
     if (!user)
       return res
         .status(401)
