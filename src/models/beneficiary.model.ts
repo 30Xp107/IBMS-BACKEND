@@ -38,6 +38,15 @@ const beneficiarySchema = new Schema<IBeneficiary>(
 );
 
 // Add indexes for performance
+beneficiarySchema.index({ 
+  first_name: 1, 
+  last_name: 1, 
+  middle_name: 1, 
+  birthdate: 1, 
+  barangay: 1, 
+  municipality: 1, 
+  province: 1 
+});
 beneficiarySchema.index({ first_name: 1, last_name: 1 });
 beneficiarySchema.index({ pkno: 1 });
 beneficiarySchema.index({ region: 1 });

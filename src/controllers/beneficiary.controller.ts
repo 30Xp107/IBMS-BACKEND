@@ -74,6 +74,22 @@ export const getBeneficiaries = catchAsync(
 
 export const createBeneficiary = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
+    // Check for duplicates (combination of 7 fields)
+    const duplicateQuery = {
+      first_name: { $regex: new RegExp(`^${(req.body.first_name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
+      last_name: { $regex: new RegExp(`^${(req.body.last_name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
+      middle_name: { $regex: new RegExp(`^${(req.body.middle_name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
+      birthdate: req.body.birthdate || "",
+      barangay: { $regex: new RegExp(`^${(req.body.barangay || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
+      municipality: { $regex: new RegExp(`^${(req.body.municipality || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
+      province: { $regex: new RegExp(`^${(req.body.province || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") }
+    };
+
+    const existing = await Beneficiary.findOne(duplicateQuery);
+    if (existing) {
+      return next(new ErrorHandler("A beneficiary with the same name, birthdate, and address already exists", 400));
+    }
+
     // Auto-populate region if province is provided but region is missing
     if (req.body.province && !req.body.region) {
       if (req.body.province.toUpperCase() === "CITY OF BACOLOD") {
@@ -215,17 +231,30 @@ export const bulkCreateBeneficiaries = catchAsync(
 
 export const checkDuplicates = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
-    const { hhids } = req.body;
-    if (!hhids || !Array.isArray(hhids)) {
+    const { beneficiaries } = req.body;
+    if (!beneficiaries || !Array.isArray(beneficiaries)) {
       return next(new ErrorHandler("Invalid request body", 400));
     }
 
     const duplicates: any[] = [];
-    const chunkSize = 5000;
+    const chunkSize = 1000; // Smaller chunk size for complex $or query
     
-    for (let i = 0; i < hhids.length; i += chunkSize) {
-      const chunk = hhids.slice(i, i + chunkSize);
-      const existing = await Beneficiary.find({ hhid: { $in: chunk } }, "hhid first_name last_name");
+    for (let i = 0; i < beneficiaries.length; i += chunkSize) {
+      const chunk = beneficiaries.slice(i, i + chunkSize);
+      
+      const query = {
+        $or: chunk.map(b => ({
+          first_name: { $regex: new RegExp(`^${(b.first_name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
+          last_name: { $regex: new RegExp(`^${(b.last_name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
+          middle_name: { $regex: new RegExp(`^${(b.middle_name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
+          birthdate: b.birthdate || "",
+          barangay: { $regex: new RegExp(`^${(b.barangay || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
+          municipality: { $regex: new RegExp(`^${(b.municipality || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
+          province: { $regex: new RegExp(`^${(b.province || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") }
+        }))
+      };
+
+      const existing = await Beneficiary.find(query, "hhid first_name last_name middle_name birthdate barangay municipality province");
       duplicates.push(...existing);
     }
 
