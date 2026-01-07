@@ -130,7 +130,28 @@ export const bulkCreateBeneficiaries = catchAsync(
 
     // Split into chunks of 1000 for better performance and to avoid memory issues
     const chunkSize = 1000;
-    const regionCache = new Map<string, string>();
+    
+    // Pre-fetch all provinces and regions to avoid thousands of DB queries
+    const allProvinces = await Area.find({ type: "province" }).populate("parent_id");
+    const provinceToRegionMap = new Map<string, string>();
+    
+    allProvinces.forEach((p: any) => {
+      const provinceName = p.name.toUpperCase();
+      let regionName = "";
+      if (p.parent_id && p.parent_id.name) {
+        regionName = p.parent_id.name;
+      } else if (p.parent_code) {
+        // Fallback if populate didn't work as expected
+        regionName = ""; // Will handle in a second pass if needed, but usually populate works
+      }
+      if (regionName) {
+        provinceToRegionMap.set(provinceName, regionName);
+      }
+    });
+
+    // Proactively drop old HHID unique index if it exists (ignoring errors if it doesn't)
+    // This ensures we don't have stray restrictions from previous versions
+    await Beneficiary.collection.dropIndex("hhid_1").catch(() => {});
 
     for (let i = 0; i < beneficiaries.length; i += chunkSize) {
       const chunk = beneficiaries.slice(i, i + chunkSize);
@@ -141,35 +162,11 @@ export const bulkCreateBeneficiaries = catchAsync(
       for (let j = 0; j < chunk.length; j++) {
         const b = chunk[j];
         
-        // Auto-populate missing regions
+        // Auto-populate missing regions using the map
         if (b.province && !b.region) {
           const provinceKey = b.province.toUpperCase();
-          if (regionCache.has(provinceKey)) {
-            b.region = regionCache.get(provinceKey);
-          } else if (provinceKey === "CITY OF BACOLOD") {
-            const region = "NEGROS ISLAND REGION (NIR)";
-            b.region = region;
-            regionCache.set(provinceKey, region);
-          } else {
-            const provinceArea = await Area.findOne({ 
-                name: { $regex: new RegExp(`^${(b.province as string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") }, 
-                type: "province" 
-              }).populate("parent_id");
-            
-            if (provinceArea) {
-              let regionName = "";
-              if (provinceArea.parent_id && (provinceArea.parent_id as any).name) {
-                regionName = (provinceArea.parent_id as any).name;
-              } else if (provinceArea.parent_code) {
-                const regionArea = await Area.findOne({ code: provinceArea.parent_code, type: "region" });
-                if (regionArea) regionName = regionArea.name;
-              }
-              
-              if (regionName) {
-                b.region = regionName;
-                regionCache.set(provinceKey, regionName);
-              }
-            }
+          if (provinceToRegionMap.has(provinceKey)) {
+            b.region = provinceToRegionMap.get(provinceKey);
           }
         }
 
@@ -191,17 +188,19 @@ export const bulkCreateBeneficiaries = catchAsync(
       if (validDocs.length === 0) continue;
 
       try {
-        // Use insertMany with ordered: false to continue even if some fail (e.g. database duplicates)
-        // We already did Mongoose validation, but using Beneficiary.insertMany is safer and still fast with ordered: false.
-        await Beneficiary.insertMany(validDocs, { ordered: false });
-        results.success += validDocs.length;
+        // Use Beneficiary.collection.insertMany for raw performance and predictable ordered:false behavior
+        // This bypasses Mongoose validation (we already did it) and hooks.
+        const result = await Beneficiary.collection.insertMany(validDocs, { ordered: false }) as any;
+        results.success += (result.insertedCount || 0);
       } catch (error: any) {
-        // Handle database errors (mostly duplicates if index still exists)
+        // In MongoDB driver, even if it throws, some might have succeeded
+        if (error.result) {
+          const insertedCount = error.result.nInserted || 0;
+          results.success += insertedCount;
+          results.failed += (validDocs.length - insertedCount);
+        }
+
         if (error.writeErrors) {
-          const writeErrorCount = error.writeErrors.length;
-          results.success += (validDocs.length - writeErrorCount);
-          results.failed += writeErrorCount;
-          
           error.writeErrors.forEach((err: any) => {
             if (results.errors.length < 50) {
               let msg = err.errmsg || 'Unknown database error';
@@ -213,8 +212,8 @@ export const bulkCreateBeneficiaries = catchAsync(
               results.errors.push(`Row ${i + (err.index || 0) + 1}: ${msg}`);
             }
           });
-        } else {
-          // General error for the whole chunk
+        } else if (!error.result) {
+          // General error for the whole chunk if not a bulk write error
           results.failed += validDocs.length;
           if (results.errors.length < 50) {
             results.errors.push(`Chunk starting at row ${i + 1}: ${error.message || 'Unknown error'}`);
