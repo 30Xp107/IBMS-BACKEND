@@ -207,7 +207,7 @@ export const getuser = catchAsync(
 export const approveUser = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const { id } = req.params;
-    const { status, assigned_areas, role } = req.body;
+    const { status, assigned_areas, role, name, email, password } = req.body;
 
     const user = await userModel.findById(id);
     if (!user) {
@@ -222,6 +222,17 @@ export const approveUser = catchAsync(
       user.assigned_areas = uniqueAreas;
     }
     if (role) user.role = role as "user" | "admin";
+    
+    // Add support for name, email, and password updates
+    if (name) user.name = name;
+    if (email) {
+      const isEmailExist = await userModel.findOne({ email });
+      if (isEmailExist && isEmailExist._id.toString() !== id) {
+        return next(new ErrorHandler("Email already exists", 400));
+      }
+      user.email = email;
+    }
+    if (password) user.password = password;
 
     await user.save();
 
@@ -231,7 +242,7 @@ export const approveUser = catchAsync(
       "users",
       user.id,
       "",
-      JSON.stringify({ status, assigned_areas, role })
+      JSON.stringify({ status, assigned_areas, role, name, email })
     );
 
     const updatedUser = await userModel.findById(id).select("-password").populate("assigned_areas", "name");
