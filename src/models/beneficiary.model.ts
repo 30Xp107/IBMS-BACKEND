@@ -46,7 +46,7 @@ beneficiarySchema.index({
   barangay: 1, 
   municipality: 1, 
   province: 1 
-});
+}, { unique: true });
 beneficiarySchema.index({ first_name: 1, last_name: 1 });
 beneficiarySchema.index({ pkno: 1 });
 beneficiarySchema.index({ region: 1 });

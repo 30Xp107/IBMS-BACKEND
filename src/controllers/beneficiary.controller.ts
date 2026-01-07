@@ -206,9 +206,9 @@ export const bulkCreateBeneficiaries = catchAsync(
             if (results.errors.length < 50) {
               let msg = err.errmsg || 'Unknown database error';
               if (msg.includes('E11000') || msg.includes('duplicate key')) {
-                const hhidMatch = msg.match(/hhid: "([^"]+)"/);
-                const hhid = hhidMatch ? hhidMatch[1] : (err.op?.hhid || 'unknown');
-                msg = `Duplicate HHID in database: ${hhid}`;
+                const op = err.op || {};
+                const name = `${op.first_name || ''} ${op.last_name || ''}`.trim();
+                msg = `Duplicate beneficiary already exists: ${name} (HHID: ${op.hhid || 'unknown'})`;
               }
               results.errors.push(`Row ${i + (err.index || 0) + 1}: ${msg}`);
             }
