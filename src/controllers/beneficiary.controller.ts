@@ -128,8 +128,9 @@ export const bulkCreateBeneficiaries = catchAsync(
       errors: [] as string[]
     };
 
-    // Split into chunks of 1000 for better performance and to avoid memory issues
-    const chunkSize = 1000;
+    // Split into chunks for better performance and to avoid memory issues
+    // Reduced chunk size to 500 to avoid connection timeouts during large imports
+    const chunkSize = 500;
     
     // Pre-fetch all provinces and regions to avoid thousands of DB queries
     const allProvinces = await Area.find({ type: "province" }).populate("parent_id");
@@ -236,7 +237,7 @@ export const checkDuplicates = catchAsync(
     }
 
     const duplicates: any[] = [];
-    const chunkSize = 1000; // Smaller chunk size for complex $or query
+    const chunkSize = 50; // Much smaller chunk size for complex $or query with regex to avoid timeouts
     
     for (let i = 0; i < beneficiaries.length; i += chunkSize) {
       const chunk = beneficiaries.slice(i, i + chunkSize);

@@ -101,7 +101,7 @@ export const updateNES = catchAsync(
 export const upsertNES = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const user = (req as any).user;
-    const { beneficiary_id, hhid, frm_period, attendance, reason, date_recorded } = req.body;
+    const { beneficiary_id, hhid, frm_period, attendance, reason, action: actionTaken, date_recorded } = req.body;
 
     const result = await NES.findOneAndUpdate(
       { beneficiary_id, frm_period },
@@ -111,6 +111,7 @@ export const upsertNES = catchAsync(
         frm_period,
         attendance,
         reason,
+        action: actionTaken,
         date_recorded,
         recorded_by: user._id,
       },

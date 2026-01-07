@@ -7,8 +7,8 @@ const MONGODB_URI = process.env.MONGODB_URI || ''
 const connectDB = async () => {
     try {
         const conn = await mongoose.connect(MONGODB_URI, {
-            serverSelectionTimeoutMS: 10000, // 10 seconds
-            socketTimeoutMS: 45000, // 45 seconds
+            serverSelectionTimeoutMS: 15000, // Increased to 15 seconds
+            socketTimeoutMS: 90000, // Increased to 90 seconds for large imports
             family: 4 // Use IPv4, skip trying IPv6
         })
         console.log(`MongoDB connected: ${conn.connection.host}`)
