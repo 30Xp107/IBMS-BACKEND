@@ -34,7 +34,7 @@ export const attachTokens = (res: Response, accessToken: string, refreshToken: s
 
   res.cookie('access_token', accessToken, {
     ...cookieOptions,
-    maxAge: 1000 * 60 * 60 * 24, // 1 day
+    maxAge: 1000 * 60 * 15, // 15 minutes to match JWT expiration
   })
   
   res.cookie('refresh_token', refreshToken, {
