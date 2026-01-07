@@ -74,6 +74,40 @@ export const getBeneficiaries = catchAsync(
 
 export const createBeneficiary = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
+    const user = (req as any).user;
+
+    // Check area authorization for non-admin users
+    if (user.role !== "admin") {
+      if (!user.assigned_areas || user.assigned_areas.length === 0) {
+        return next(new ErrorHandler("You are not assigned to any areas and cannot create beneficiaries", 403));
+      }
+
+      const areaFilter = await getAreaFilter(user.assigned_areas);
+      if (areaFilter) {
+        // Check manually against authorized areas
+        const assignedAreas = await Area.find({
+          $or: [
+            { _id: { $in: user.assigned_areas.map((a: any) => typeof a === 'object' ? a._id : a).filter((id: any) => id && id.toString().match(/^[0-9a-fA-F]{24}$/)) } },
+            { name: { $in: user.assigned_areas.map((a: any) => typeof a === 'object' ? a.name : a) } }
+          ]
+        });
+
+        const isMatch = assignedAreas.some(area => {
+          const escapedName = area.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const regex = new RegExp(`^${escapedName}$`, "i");
+          if (area.type === 'region') return regex.test(req.body.region || "");
+          if (area.type === 'province') return regex.test(req.body.province || "");
+          if (area.type === 'municipality') return regex.test(req.body.municipality || "");
+          if (area.type === 'barangay') return regex.test(req.body.barangay || "");
+          return false;
+        });
+
+        if (!isMatch) {
+          return next(new ErrorHandler("You are not authorized to create beneficiaries in this area", 403));
+        }
+      }
+    }
+
     // Check for duplicates (combination of 7 fields)
     const duplicateQuery = {
       first_name: { $regex: new RegExp(`^${(req.body.first_name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
@@ -266,9 +300,47 @@ export const checkDuplicates = catchAsync(
 
 export const updateBeneficiary = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
-    const beneficiary = await Beneficiary.findById(req.params.id);
+    const user = (req as any).user;
+    
+    const query: any = { _id: req.params.id };
+    if (user.role !== "admin") {
+      const areaFilter = await getAreaFilter(user.assigned_areas);
+      if (areaFilter) {
+        query.$and = [areaFilter];
+      } else {
+        return next(new ErrorHandler("You are not assigned to any areas and cannot update beneficiaries", 403));
+      }
+    }
+
+    const beneficiary = await Beneficiary.findOne(query);
     if (!beneficiary) {
-      return next(new ErrorHandler("Beneficiary not found", 404));
+      return next(new ErrorHandler("Beneficiary not found or you are not authorized to update it", 404));
+    }
+
+    // If area is being changed, check if the new area is also authorized
+    if (user.role !== "admin" && (req.body.region || req.body.province || req.body.municipality || req.body.barangay)) {
+      const assignedAreas = await Area.find({
+        $or: [
+          { _id: { $in: user.assigned_areas.map((a: any) => typeof a === 'object' ? a._id : a).filter((id: any) => id && id.toString().match(/^[0-9a-fA-F]{24}$/)) } },
+          { name: { $in: user.assigned_areas.map((a: any) => typeof a === 'object' ? a.name : a) } }
+        ]
+      });
+
+      const updatedData = { ...beneficiary.toObject(), ...req.body };
+      
+      const isMatch = assignedAreas.some(area => {
+        const escapedName = area.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const regex = new RegExp(`^${escapedName}$`, "i");
+        if (area.type === 'region') return regex.test(updatedData.region || "");
+        if (area.type === 'province') return regex.test(updatedData.province || "");
+        if (area.type === 'municipality') return regex.test(updatedData.municipality || "");
+        if (area.type === 'barangay') return regex.test(updatedData.barangay || "");
+        return false;
+      });
+
+      if (!isMatch) {
+        return next(new ErrorHandler("You are not authorized to move a beneficiary to this area", 403));
+      }
     }
 
     // Auto-populate region if province is changed but region is not provided or needs update

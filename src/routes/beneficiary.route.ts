@@ -16,7 +16,7 @@ router.get("/", isAuthenticated, getBeneficiaries);
 router.post("/", isAuthenticated, authorizeRoles("admin"), createBeneficiary);
 router.post("/bulk", isAuthenticated, authorizeRoles("admin"), bulkCreateBeneficiaries);
 router.post("/check-duplicates", isAuthenticated, authorizeRoles("admin"), checkDuplicates);
-router.put("/:id", isAuthenticated, authorizeRoles("admin"), updateBeneficiary);
+router.put("/:id", isAuthenticated, updateBeneficiary);
 router.delete("/:id", isAuthenticated, authorizeRoles("admin"), deleteBeneficiary);
 router.post("/bulk-delete", isAuthenticated, authorizeRoles("admin"), bulkDeleteBeneficiaries);
 
