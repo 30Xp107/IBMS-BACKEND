@@ -14,6 +14,7 @@ export interface IBeneficiary extends Document {
   province: string;
   region: string;
   contact?: string;
+  is4ps?: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -33,6 +34,7 @@ const beneficiarySchema = new Schema<IBeneficiary>(
     province: { type: String, default: "" },
     region: { type: String, default: "" },
     contact: { type: String, default: "" },
+    is4ps: { type: String, default: "No" },
   },
   { timestamps: true }
 );
