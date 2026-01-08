@@ -37,13 +37,22 @@ export const getAreaFilter = async (assigned_areas: any[]) => {
 
     const orConditions = assignedAreas.map(area => {
       const condition: any = {};
-      const escapedName = area.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const val = area.name.trim();
+      const escapedName = val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      
       if (area.type === 'region') {
         condition.region = { $regex: new RegExp(`^${escapedName}$`, "i") };
       } else if (area.type === 'province') {
         condition.province = { $regex: new RegExp(`^${escapedName}$`, "i") };
       } else if (area.type === 'municipality') {
-        condition.municipality = { $regex: new RegExp(`^${escapedName}$`, "i") };
+        // Handle "City of X" or "X City" or just "X"
+        const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?$/i);
+        const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?$/i);
+        
+        const core = (cityMatch?.[2] || muniMatch?.[2] || val).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const pattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)$`;
+        
+        condition.municipality = { $regex: new RegExp(pattern, "i") };
       } else if (area.type === 'barangay') {
         condition.barangay = { $regex: new RegExp(`^${escapedName}$`, "i") };
       }

@@ -6,6 +6,41 @@ import { catchAsync } from "../utils/catchAsync";
 import { logAudit } from "../utils/auditLogger";
 import { getAreaFilter } from "../utils/areaFilter";
 
+/**
+ * Standardizes area names in the request body based on the Area collection
+ */
+const standardizeAreaNames = async (body: any) => {
+  const types = ['region', 'province', 'municipality', 'barangay'];
+  
+  for (const type of types) {
+    const value = body[type];
+    if (value && typeof value === 'string' && value.toLowerCase() !== 'all') {
+      const val = value.trim();
+      const escapedValue = val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      
+      let pattern = `^${escapedValue}$`;
+      
+      // Special handling for municipalities to match naming variations
+      if (type === 'municipality') {
+        const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?$/i);
+        const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?$/i);
+        
+        const core = (cityMatch?.[2] || muniMatch?.[2] || val).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        pattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)$`;
+      }
+      
+      const areaRecord = await Area.findOne({
+        type: type as any,
+        name: { $regex: new RegExp(pattern, "i") }
+      });
+      
+      if (areaRecord) {
+        body[type] = areaRecord.name;
+      }
+    }
+  }
+};
+
 export const getBeneficiaries = catchAsync(
   async (req: Request, res: Response) => {
     const user = (req as any).user;
@@ -22,16 +57,28 @@ export const getBeneficiaries = catchAsync(
     }
 
     if (barangay && barangay !== "all") {
-      query.barangay = { $regex: new RegExp(`^${(barangay as string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") };
+      const escapedValue = (barangay as string).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.barangay = { $regex: new RegExp(`^${escapedValue}$`, "i") };
     }
     if (municipality && municipality !== "all") {
-      query.municipality = { $regex: new RegExp(`^${(municipality as string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") };
+      const val = (municipality as string).trim();
+      const escapedValue = val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      // Handle "City of X" or "X City" or just "X"
+      const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?$/i);
+      const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?$/i);
+      
+      const core = (cityMatch?.[2] || muniMatch?.[2] || val).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)$`;
+      
+      query.municipality = { $regex: new RegExp(pattern, "i") };
     }
     if (province && province !== "all") {
-      query.province = { $regex: new RegExp(`^${(province as string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") };
+      const escapedValue = (province as string).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.province = { $regex: new RegExp(`^${escapedValue}$`, "i") };
     }
     if (region && region !== "all") {
-      query.region = { $regex: new RegExp(`^${(region as string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") };
+      const escapedValue = (region as string).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      query.region = { $regex: new RegExp(`^${escapedValue}$`, "i") };
     }
 
     if (search) {
@@ -124,6 +171,9 @@ export const createBeneficiary = catchAsync(
       return next(new ErrorHandler("A beneficiary with the same name, birthdate, and address already exists", 400));
     }
 
+    // Standardize area names before saving
+    await standardizeAreaNames(req.body);
+
     // Auto-populate region if province is provided but region is missing
     if (req.body.province && !req.body.region) {
       if (req.body.province.toUpperCase() === "CITY OF BACOLOD") {
@@ -169,18 +219,44 @@ export const bulkCreateBeneficiaries = catchAsync(
     // Pre-fetch all provinces and regions to avoid thousands of DB queries
     const allProvinces = await Area.find({ type: "province" }).populate("parent_id");
     const provinceToRegionMap = new Map<string, string>();
+    const provinceStandardMap = new Map<string, string>();
     
     allProvinces.forEach((p: any) => {
+      const canonicalName = p.name;
       const provinceName = p.name.toUpperCase();
+      provinceStandardMap.set(provinceName, canonicalName);
+      
       let regionName = "";
       if (p.parent_id && p.parent_id.name) {
         regionName = p.parent_id.name;
-      } else if (p.parent_code) {
-        // Fallback if populate didn't work as expected
-        regionName = ""; // Will handle in a second pass if needed, but usually populate works
       }
       if (regionName) {
         provinceToRegionMap.set(provinceName, regionName);
+      }
+    });
+
+    // Pre-fetch all municipalities for standardization
+    const allMunicipalities = await Area.find({ type: "municipality" });
+    const muniMap = new Map<string, string>();
+    
+    allMunicipalities.forEach((m: any) => {
+      const canonicalName = m.name;
+      const val = m.name.trim();
+      muniMap.set(val.toUpperCase(), canonicalName);
+      
+      const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?$/i);
+      const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?$/i);
+      
+      if (cityMatch && cityMatch[2]) {
+        const core = cityMatch[2].toUpperCase();
+        muniMap.set(core, canonicalName);
+        muniMap.set(`${core} CITY`, canonicalName);
+        muniMap.set(`CITY OF ${core}`, canonicalName);
+      } else if (muniMatch && muniMatch[2]) {
+        const core = muniMatch[2].toUpperCase();
+        muniMap.set(core, canonicalName);
+        muniMap.set(`${core} MUNICIPALITY`, canonicalName);
+        muniMap.set(`MUNICIPALITY OF ${core}`, canonicalName);
       }
     });
 
@@ -197,6 +273,22 @@ export const bulkCreateBeneficiaries = catchAsync(
       for (let j = 0; j < chunk.length; j++) {
         const b = chunk[j];
         
+        // Standardize municipality
+        if (b.municipality) {
+          const muniKey = b.municipality.trim().toUpperCase();
+          if (muniMap.has(muniKey)) {
+            b.municipality = muniMap.get(muniKey);
+          }
+        }
+
+        // Standardize province
+        if (b.province) {
+          const provinceKey = b.province.trim().toUpperCase();
+          if (provinceStandardMap.has(provinceKey)) {
+            b.province = provinceStandardMap.get(provinceKey);
+          }
+        }
+
         // Auto-populate missing regions using the map
         if (b.province && !b.region) {
           const provinceKey = b.province.toUpperCase();
@@ -277,15 +369,23 @@ export const checkDuplicates = catchAsync(
       const chunk = beneficiaries.slice(i, i + chunkSize);
       
       const query = {
-        $or: chunk.map(b => ({
-          first_name: { $regex: new RegExp(`^${(b.first_name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
-          last_name: { $regex: new RegExp(`^${(b.last_name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
-          middle_name: { $regex: new RegExp(`^${(b.middle_name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
-          birthdate: b.birthdate || "",
-          barangay: { $regex: new RegExp(`^${(b.barangay || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
-          municipality: { $regex: new RegExp(`^${(b.municipality || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
-          province: { $regex: new RegExp(`^${(b.province || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") }
-        }))
+        $or: chunk.map(b => {
+          const muniVal = (b.municipality || '').trim();
+          const cityMatch = muniVal.match(/^(city of\s+)?(.+?)(\s+city)?$/i);
+          const muniMatch = muniVal.match(/^(municipality of\s+)?(.+?)(\s+municipality)?$/i);
+          const core = (cityMatch?.[2] || muniMatch?.[2] || muniVal).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const muniPattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)$`;
+
+          return {
+            first_name: { $regex: new RegExp(`^${(b.first_name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
+            last_name: { $regex: new RegExp(`^${(b.last_name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
+            middle_name: { $regex: new RegExp(`^${(b.middle_name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
+            birthdate: b.birthdate || "",
+            barangay: { $regex: new RegExp(`^${(b.barangay || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
+            municipality: { $regex: new RegExp(muniPattern, "i") },
+            province: { $regex: new RegExp(`^${(b.province || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") }
+          };
+        })
       };
 
       const existing = await Beneficiary.find(query, "hhid first_name last_name middle_name birthdate barangay municipality province");
@@ -343,6 +443,9 @@ export const updateBeneficiary = catchAsync(
       }
     }
 
+    // Standardize area names before saving
+    await standardizeAreaNames(req.body);
+
     // Auto-populate region if province is changed but region is not provided or needs update
     if (req.body.province && (req.body.province !== beneficiary.province || !beneficiary.region)) {
       if (req.body.province.toUpperCase() === "CITY OF BACOLOD") {
@@ -390,28 +493,71 @@ export const bulkDeleteBeneficiaries = catchAsync(
 
     let deleteQuery: any = {};
 
+    // Filter by user's assigned areas if not admin
+    if (user.role !== "admin" && user.assigned_areas && user.assigned_areas.length > 0) {
+      const areaFilter = await getAreaFilter(user.assigned_areas);
+      if (areaFilter) {
+        deleteQuery.$and = [areaFilter];
+      }
+    }
+
     if (all) {
       // If deleting all based on filters
       if (filters) {
+        const filterConditions: any[] = [];
+        
         if (filters.search) {
-          deleteQuery.$or = [
-            { hhid: { $regex: filters.search, $options: "i" } },
-            { pkno: { $regex: filters.search, $options: "i" } },
-            { first_name: { $regex: filters.search, $options: "i" } },
-            { last_name: { $regex: filters.search, $options: "i" } },
-          ];
+          filterConditions.push({
+            $or: [
+              { hhid: { $regex: filters.search, $options: "i" } },
+              { pkno: { $regex: filters.search, $options: "i" } },
+              { first_name: { $regex: filters.search, $options: "i" } },
+              { last_name: { $regex: filters.search, $options: "i" } },
+            ]
+          });
         }
-        if (filters.region && filters.region !== "all") deleteQuery.region = filters.region;
-        if (filters.province && filters.province !== "all") deleteQuery.province = filters.province;
-        if (filters.municipality && filters.municipality !== "all") deleteQuery.municipality = filters.municipality;
-        if (filters.barangay && filters.barangay !== "all") deleteQuery.barangay = filters.barangay;
+        
+        if (filters.region && filters.region !== "all") {
+          const escapedValue = (filters.region as string).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          filterConditions.push({ region: { $regex: new RegExp(`^${escapedValue}$`, "i") } });
+        }
+        if (filters.province && filters.province !== "all") {
+          const escapedValue = (filters.province as string).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          filterConditions.push({ province: { $regex: new RegExp(`^${escapedValue}$`, "i") } });
+        }
+        if (filters.municipality && filters.municipality !== "all") {
+           const val = (filters.municipality as string).trim();
+           const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?$/i);
+           const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?$/i);
+           
+           const core = (cityMatch?.[2] || muniMatch?.[2] || val).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+           const pattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)$`;
+           
+           filterConditions.push({ municipality: { $regex: new RegExp(pattern, "i") } });
+         }
+        if (filters.barangay && filters.barangay !== "all") {
+          const escapedValue = (filters.barangay as string).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          filterConditions.push({ barangay: { $regex: new RegExp(`^${escapedValue}$`, "i") } });
+        }
+
+        if (filterConditions.length > 0) {
+          if (deleteQuery.$and) {
+            deleteQuery.$and.push(...filterConditions);
+          } else {
+            deleteQuery.$and = filterConditions;
+          }
+        }
       }
     } else {
       // If deleting specific IDs
       if (!ids || !Array.isArray(ids) || ids.length === 0) {
         return next(new ErrorHandler("No IDs provided for deletion", 400));
       }
-      deleteQuery = { _id: { $in: ids } };
+      if (deleteQuery.$and) {
+        deleteQuery.$and.push({ _id: { $in: ids } });
+      } else {
+        deleteQuery._id = { $in: ids };
+      }
     }
 
     const result = await Beneficiary.deleteMany(deleteQuery);
