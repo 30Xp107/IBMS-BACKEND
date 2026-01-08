@@ -20,13 +20,12 @@ const standardizeAreaNames = async (body: any) => {
       
       let pattern = `^${escapedValue}$`;
       
-      // Special handling for municipalities to match naming variations
       if (type === 'municipality') {
-        const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?$/i);
-        const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?$/i);
+        const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?(\s*\(.+?\))?$/i);
+        const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?(\s*\(.+?\))?$/i);
         
         const core = (cityMatch?.[2] || muniMatch?.[2] || val).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        pattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)$`;
+        pattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)(\\s*\\(.+?\\))?$`;
       }
       
       const areaRecord = await Area.findOne({
@@ -63,12 +62,16 @@ export const getBeneficiaries = catchAsync(
     if (municipality && municipality !== "all") {
       const val = (municipality as string).trim();
       const escapedValue = val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      // Handle "City of X" or "X City" or just "X"
-      const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?$/i);
-      const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?$/i);
+      const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?(\s*\(.+?\))?$/i);
+      const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?(\s*\(.+?\))?$/i);
       
       const core = (cityMatch?.[2] || muniMatch?.[2] || val).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const pattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)$`;
+      // Final robust pattern:
+      // 1. Matches core name (escaped)
+      // 2. Allows optional "City of" or "City" or "Municipality of" or "Municipality"
+      // 3. Allows optional suffix in parentheses at the end (e.g. " (Saravia)")
+      // 4. Case-insensitive
+      const pattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)(\\s*\\(.+?\\))?$`;
       
       query.municipality = { $regex: new RegExp(pattern, "i") };
     }
@@ -244,8 +247,8 @@ export const bulkCreateBeneficiaries = catchAsync(
       const val = m.name.trim();
       muniMap.set(val.toUpperCase(), canonicalName);
       
-      const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?$/i);
-      const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?$/i);
+      const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?(\s*\(.+?\))?$/i);
+      const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?(\s*\(.+?\))?$/i);
       
       if (cityMatch && cityMatch[2]) {
         const core = cityMatch[2].toUpperCase();
@@ -370,13 +373,13 @@ export const checkDuplicates = catchAsync(
       
       const query = {
         $or: chunk.map(b => {
-          const muniVal = (b.municipality || '').trim();
-          const cityMatch = muniVal.match(/^(city of\s+)?(.+?)(\s+city)?$/i);
-          const muniMatch = muniVal.match(/^(municipality of\s+)?(.+?)(\s+municipality)?$/i);
-          const core = (cityMatch?.[2] || muniMatch?.[2] || muniVal).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          const muniPattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)$`;
+           const muniVal = (b.municipality || '').trim();
+           const cityMatch = muniVal.match(/^(city of\s+)?(.+?)(\s+city)?(\s*\(.+?\))?$/i);
+           const muniMatch = muniVal.match(/^(municipality of\s+)?(.+?)(\s+municipality)?(\s*\(.+?\))?$/i);
+           const core = (cityMatch?.[2] || muniMatch?.[2] || muniVal).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+           const muniPattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)(\\s*\\(.+?\\))?$`;
 
-          return {
+           return {
             first_name: { $regex: new RegExp(`^${(b.first_name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
             last_name: { $regex: new RegExp(`^${(b.last_name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
             middle_name: { $regex: new RegExp(`^${(b.middle_name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
@@ -526,15 +529,15 @@ export const bulkDeleteBeneficiaries = catchAsync(
           filterConditions.push({ province: { $regex: new RegExp(`^${escapedValue}$`, "i") } });
         }
         if (filters.municipality && filters.municipality !== "all") {
-           const val = (filters.municipality as string).trim();
-           const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?$/i);
-           const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?$/i);
-           
-           const core = (cityMatch?.[2] || muniMatch?.[2] || val).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-           const pattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)$`;
-           
-           filterConditions.push({ municipality: { $regex: new RegExp(pattern, "i") } });
-         }
+            const val = (filters.municipality as string).trim();
+            const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?(\s*\(.+?\))?$/i);
+            const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?(\s*\(.+?\))?$/i);
+            
+            const core = (cityMatch?.[2] || muniMatch?.[2] || val).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const pattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)(\\s*\\(.+?\\))?$`;
+            
+            filterConditions.push({ municipality: { $regex: new RegExp(pattern, "i") } });
+          }
         if (filters.barangay && filters.barangay !== "all") {
           const escapedValue = (filters.barangay as string).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
           filterConditions.push({ barangay: { $regex: new RegExp(`^${escapedValue}$`, "i") } });
