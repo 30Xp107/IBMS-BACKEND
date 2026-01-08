@@ -20,7 +20,7 @@ const standardizeAreaNames = async (body: any) => {
       
       let pattern = `^${escapedValue}$`;
       
-      if (type === 'municipality' || (type === 'province' && !body.municipality)) {
+      if (type === 'municipality') {
         const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?(\s*\(.+?\))?$/i);
         const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?(\s*\(.+?\))?$/i);
         
@@ -28,23 +28,10 @@ const standardizeAreaNames = async (body: any) => {
         pattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)(\\s*\\(.+?\\))?$`;
       }
       
-      let areaRecord = await Area.findOne({
+      const areaRecord = await Area.findOne({
         type: type as any,
         name: { $regex: new RegExp(pattern, "i") }
       });
-      
-      // If searching for province and not found, check if it's an HUC (municipality directly under region)
-      if (type === 'province' && !areaRecord) {
-        areaRecord = await Area.findOne({
-          type: "municipality",
-          name: { $regex: new RegExp(pattern, "i") }
-        }).populate("parent_id");
-        
-        // If found as HUC, ensure its parent is a region
-        if (areaRecord && areaRecord.parent_id && (areaRecord.parent_id as any).type !== 'region') {
-          areaRecord = null; // Not an HUC
-        }
-      }
       
       if (areaRecord) {
         body[type] = areaRecord.name;
@@ -192,27 +179,20 @@ export const createBeneficiary = catchAsync(
 
     // Auto-populate region if province is provided but region is missing
     if (req.body.province && !req.body.region) {
-      const provinceName = (req.body.province as string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      
-      // Try to find as province first
-      let parentArea = await Area.findOne({ 
-        name: { $regex: new RegExp(`^${provinceName}$`, "i") }, 
-        type: "province" 
-      }).populate("parent_id");
-      
-      // If not found as province, check if it's actually an HUC (municipality directly under region)
-      if (!parentArea) {
-        parentArea = await Area.findOne({
-          name: { $regex: new RegExp(`^${provinceName}$`, "i") },
-          type: "municipality"
+      if (req.body.province.toUpperCase() === "CITY OF BACOLOD") {
+        req.body.region = "NEGROS ISLAND REGION (NIR)";
+      } else {
+        const provinceArea = await Area.findOne({ 
+          name: { $regex: new RegExp(`^${(req.body.province as string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") }, 
+          type: "province" 
         }).populate("parent_id");
-      }
-      
-      if (parentArea && parentArea.parent_id && (parentArea.parent_id as any).name) {
-        req.body.region = (parentArea.parent_id as any).name;
-      } else if (parentArea && parentArea.parent_code) {
-        const regionArea = await Area.findOne({ code: parentArea.parent_code, type: "region" });
-        if (regionArea) req.body.region = regionArea.name;
+        
+        if (provinceArea && provinceArea.parent_id && (provinceArea.parent_id as any).name) {
+          req.body.region = (provinceArea.parent_id as any).name;
+        } else if (provinceArea && provinceArea.parent_code) {
+          const regionArea = await Area.findOne({ code: provinceArea.parent_code, type: "region" });
+          if (regionArea) req.body.region = regionArea.name;
+        }
       }
     }
 
@@ -239,28 +219,22 @@ export const bulkCreateBeneficiaries = catchAsync(
     // Reduced chunk size to 500 to avoid connection timeouts during large imports
     const chunkSize = 500;
     
-    // Pre-fetch all provinces, HUCs (municipalities directly under regions), and regions to avoid thousands of DB queries
-    const allParentAreas = await Area.find({ type: { $in: ["province", "municipality"] } }).populate("parent_id");
+    // Pre-fetch all provinces and regions to avoid thousands of DB queries
+    const allProvinces = await Area.find({ type: "province" }).populate("parent_id");
     const provinceToRegionMap = new Map<string, string>();
     const provinceStandardMap = new Map<string, string>();
     
-    allParentAreas.forEach((p: any) => {
-      // For provinces, we always add them to the map
-      // For municipalities, we only add them if they are direct children of a region (HUCs)
-      const isRegionParent = p.parent_id && (p.parent_id as any).type === "region";
+    allProvinces.forEach((p: any) => {
+      const canonicalName = p.name;
+      const provinceName = p.name.toUpperCase();
+      provinceStandardMap.set(provinceName, canonicalName);
       
-      if (p.type === "province" || (p.type === "municipality" && isRegionParent)) {
-        const canonicalName = p.name;
-        const provinceName = p.name.toUpperCase();
-        provinceStandardMap.set(provinceName, canonicalName);
-        
-        let regionName = "";
-        if (p.parent_id && (p.parent_id as any).name) {
-          regionName = (p.parent_id as any).name;
-        }
-        if (regionName) {
-          provinceToRegionMap.set(provinceName, regionName);
-        }
+      let regionName = "";
+      if (p.parent_id && p.parent_id.name) {
+        regionName = p.parent_id.name;
+      }
+      if (regionName) {
+        provinceToRegionMap.set(provinceName, regionName);
       }
     });
 
@@ -477,27 +451,20 @@ export const updateBeneficiary = catchAsync(
 
     // Auto-populate region if province is changed but region is not provided or needs update
     if (req.body.province && (req.body.province !== beneficiary.province || !beneficiary.region)) {
-      const provinceName = (req.body.province as string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      
-      // Try to find as province first
-      let parentArea = await Area.findOne({ 
-        name: { $regex: new RegExp(`^${provinceName}$`, "i") }, 
-        type: "province" 
-      }).populate("parent_id");
-      
-      // If not found as province, check if it's actually an HUC (municipality directly under region)
-      if (!parentArea) {
-        parentArea = await Area.findOne({
-          name: { $regex: new RegExp(`^${provinceName}$`, "i") },
-          type: "municipality"
+      if (req.body.province.toUpperCase() === "CITY OF BACOLOD") {
+        req.body.region = "NEGROS ISLAND REGION (NIR)";
+      } else {
+        const provinceArea = await Area.findOne({ 
+          name: { $regex: new RegExp(`^${(req.body.province as string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") }, 
+          type: "province" 
         }).populate("parent_id");
-      }
-      
-      if (parentArea && parentArea.parent_id && (parentArea.parent_id as any).name) {
-        req.body.region = (parentArea.parent_id as any).name;
-      } else if (parentArea && parentArea.parent_code) {
-        const regionArea = await Area.findOne({ code: parentArea.parent_code, type: "region" });
-        if (regionArea) req.body.region = regionArea.name;
+        
+        if (provinceArea && provinceArea.parent_id && (provinceArea.parent_id as any).name) {
+          req.body.region = (provinceArea.parent_id as any).name;
+        } else if (provinceArea && provinceArea.parent_code) {
+          const regionArea = await Area.findOne({ code: provinceArea.parent_code, type: "region" });
+          if (regionArea) req.body.region = regionArea.name;
+        }
       }
     }
 
@@ -525,6 +492,7 @@ export const deleteBeneficiary = catchAsync(
 
 export const bulkDeleteBeneficiaries = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
+    const user = (req as any).user;
     const { ids, all, filters } = req.body;
 
     let deleteQuery: any = {};
