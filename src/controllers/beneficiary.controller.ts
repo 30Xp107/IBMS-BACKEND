@@ -317,33 +317,48 @@ export const bulkCreateBeneficiaries = catchAsync(
       
       if (validDocs.length === 0) continue;
 
+      const bulkOps = validDocs.map(b => {
+        // Create filter for upsert
+        let filter: any = {};
+        if (b.hhid) {
+          filter.hhid = b.hhid;
+        } else {
+          // Fallback to name/birthdate/location match if HHID is missing
+          filter = {
+            first_name: { $regex: new RegExp(`^${(b.first_name || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
+            last_name: { $regex: new RegExp(`^${(b.last_name || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
+            birthdate: b.birthdate || "",
+            barangay: { $regex: new RegExp(`^${(b.barangay || "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}$`, "i") },
+            municipality: b.municipality || ""
+          };
+        }
+
+        return {
+          updateOne: {
+            filter,
+            update: { $set: b },
+            upsert: true
+          }
+        };
+      });
+
       try {
-        // Use Beneficiary.collection.insertMany for raw performance and predictable ordered:false behavior
-        // This bypasses Mongoose validation (we already did it) and hooks.
-        const result = await Beneficiary.collection.insertMany(validDocs, { ordered: false }) as any;
-        results.success += (result.insertedCount || 0);
+        const result = await Beneficiary.bulkWrite(bulkOps, { ordered: false });
+        results.success += (result.upsertedCount || 0) + (result.modifiedCount || 0) + (result.matchedCount || 0);
       } catch (error: any) {
-        // In MongoDB driver, even if it throws, some might have succeeded
+        // Handle partial success/errors in bulkWrite
         if (error.result) {
-          const insertedCount = error.result.nInserted || 0;
-          results.success += insertedCount;
-          results.failed += (validDocs.length - insertedCount);
+          results.success += (error.result.nUpserted || 0) + (error.result.nModified || 0) + (error.result.nMatched || 0);
+          results.failed += (validDocs.length - (error.result.nUpserted || 0) - (error.result.nModified || 0) - (error.result.nMatched || 0));
         }
 
         if (error.writeErrors) {
           error.writeErrors.forEach((err: any) => {
             if (results.errors.length < 50) {
-              let msg = err.errmsg || 'Unknown database error';
-              if (msg.includes('E11000') || msg.includes('duplicate key')) {
-                const op = err.op || {};
-                const name = `${op.first_name || ''} ${op.last_name || ''}`.trim();
-                msg = `Duplicate beneficiary already exists: ${name} (HHID: ${op.hhid || 'unknown'})`;
-              }
-              results.errors.push(`Row ${i + (err.index || 0) + 1}: ${msg}`);
+              results.errors.push(`Row ${i + (err.index || 0) + 1}: ${err.errmsg || 'Unknown database error'}`);
             }
           });
         } else if (!error.result) {
-          // General error for the whole chunk if not a bulk write error
           results.failed += validDocs.length;
           if (results.errors.length < 50) {
             results.errors.push(`Chunk starting at row ${i + 1}: ${error.message || 'Unknown error'}`);
