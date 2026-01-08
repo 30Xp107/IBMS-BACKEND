@@ -32,7 +32,7 @@ export const login = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const { email, password } = req.body;
     const user = await userModel.findOne({ email }).select("+password");
-    if (!user) return next(new ErrorHandler("Invalid Credentials", 401));
+    if (!user) return next(new ErrorHandler("Account doesn't exist", 401));
     const ok = await user.comparePassword(password);
     if (!ok) return next(new ErrorHandler("Invalid Credentials", 401));
 
