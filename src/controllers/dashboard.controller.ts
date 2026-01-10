@@ -118,23 +118,110 @@ export const getRedemptionDashboardStats = catchAsync(
     }
 
     const totalRedemptions = await Redemption.countDocuments({});
+    const totalBeneficiaries = await Beneficiary.countDocuments(beneficiaryQuery);
     
     // Get stats by attendance
     const attendanceStats = await Redemption.aggregate([
       { $group: { _id: "$attendance", count: { $sum: 1 } } }
     ]);
 
-    // Get stats by FRM period
-    const periodStats = await Redemption.aggregate([
-      { $group: { _id: "$frm_period", count: { $sum: 1 } } },
+    // Get stats by FRM period with target vs validated vs unredeemed
+    const periodStatsRaw = await Redemption.aggregate([
+      {
+        $group: {
+          _id: "$frm_period",
+          redeemed: {
+            $sum: { $cond: [{ $eq: ["$attendance", "present"] }, 1, 0] }
+          },
+          unredeemed: {
+            $sum: { $cond: [{ $eq: ["$attendance", "absent"] }, 1, 0] }
+          }
+        }
+      },
       { $sort: { _id: -1 } },
       { $limit: 12 }
     ]);
 
+    const periodStats = periodStatsRaw.map(p => {
+      const redeemed = p.redeemed || 0;
+      const unredeemed = p.unredeemed || 0;
+      return {
+        period: p._id,
+        redeemed,
+        unredeemed,
+        remaining: totalBeneficiaries - redeemed - unredeemed,
+        target: totalBeneficiaries
+      };
+    });
+
+    // Get current month for municipality breakdown
+    const now = new Date();
+    const currentMonth = `${now.toLocaleString("default", { month: "long" })} ${now.getFullYear()}`;
+
+    // Get municipality breakdown (Target vs Validated)
+    // 1. Get targets (all beneficiaries per municipality)
+    const targets = await Beneficiary.aggregate([
+      { $match: beneficiaryQuery },
+      { $group: { _id: "$municipality", target: { $sum: 1 } } },
+      { $sort: { _id: 1 } }
+    ]);
+
+    // 2. Get recorded (redemptions for current month per municipality)
+    const recorded = await Redemption.aggregate([
+      { $match: { frm_period: currentMonth } },
+      {
+        $addFields: {
+          beneficiaryObjectId: { $toObjectId: "$beneficiary_id" }
+        }
+      },
+      {
+        $lookup: {
+          from: "beneficiaries",
+          localField: "beneficiaryObjectId",
+          foreignField: "_id",
+          as: "beneficiary"
+        }
+      },
+      { $unwind: "$beneficiary" },
+      // Apply the same beneficiaryQuery filters if any
+      { 
+        $match: Object.keys(beneficiaryQuery).reduce((acc: any, key) => {
+          acc[`beneficiary.${key}`] = beneficiaryQuery[key];
+          return acc;
+        }, {})
+      },
+      {
+        $group: {
+          _id: "$beneficiary.municipality",
+          redeemed: {
+            $sum: { $cond: [{ $eq: ["$attendance", "present"] }, 1, 0] }
+          },
+          unredeemed: {
+            $sum: { $cond: [{ $eq: ["$attendance", "absent"] }, 1, 0] }
+          }
+        }
+      }
+    ]);
+
+    // Merge targets and recorded
+    const municipalityBreakdown = targets.map(t => {
+      const rec = recorded.find(r => r._id === t._id);
+      const redeemed = rec ? rec.redeemed : 0;
+      const unredeemed = rec ? rec.unredeemed : 0;
+      return {
+        municipality: t._id || "Unknown",
+        target: t.target,
+        redeemed,
+        unredeemed,
+        remaining: t.target - redeemed - unredeemed
+      };
+    });
+
     res.status(200).json({
       totalRedemptions,
       attendanceStats,
-      periodStats
+      periodStats,
+      municipalityBreakdown
     });
   }
 );
@@ -151,32 +238,91 @@ export const getNESDashboardStats = catchAsync(
     }
 
     const totalNES = await NES.countDocuments({});
+    const totalBeneficiaries = await Beneficiary.countDocuments(beneficiaryQuery);
     
     // Get stats by attendance
     const attendanceStats = await NES.aggregate([
       { $group: { _id: "$attendance", count: { $sum: 1 } } }
     ]);
 
-    // Get stats by reason (top 5)
+    // Get stats by top reasons for non-attendance
     const reasonStats = await NES.aggregate([
-      { $match: { reason: { $ne: "" } } },
+      { $match: { attendance: "absent", reason: { $ne: "" } } },
       { $group: { _id: "$reason", count: { $sum: 1 } } },
       { $sort: { count: -1 } },
       { $limit: 5 }
     ]);
 
-    // Get stats by FRM period
-    const periodStats = await NES.aggregate([
-      { $group: { _id: "$frm_period", count: { $sum: 1 } } },
+    // Get stats by FRM period with target vs validated
+    const periodStatsRaw = await NES.aggregate([
+      { $match: { attendance: "present" } },
+      { $group: { _id: "$frm_period", validated: { $sum: 1 } } },
       { $sort: { _id: -1 } },
       { $limit: 12 }
     ]);
 
+    const periodStats = periodStatsRaw.map(p => ({
+      period: p._id,
+      validated: p.validated,
+      target: totalBeneficiaries
+    }));
+
+    // Get current month for municipality breakdown
+    const now = new Date();
+    const currentMonth = `${now.toLocaleString("default", { month: "long" })} ${now.getFullYear()}`;
+
+    // Get municipality breakdown (Target vs Validated)
+    // 1. Get targets (all beneficiaries per municipality)
+    const targets = await Beneficiary.aggregate([
+      { $match: beneficiaryQuery },
+      { $group: { _id: "$municipality", target: { $sum: 1 } } },
+      { $sort: { _id: 1 } }
+    ]);
+
+    // 2. Get validated (NES records for current month per municipality)
+    // For NES, "validated" could mean "present"
+    const validated = await NES.aggregate([
+      { $match: { frm_period: currentMonth, attendance: "present" } },
+      {
+        $addFields: {
+          beneficiaryObjectId: { $toObjectId: "$beneficiary_id" }
+        }
+      },
+      {
+        $lookup: {
+          from: "beneficiaries",
+          localField: "beneficiaryObjectId",
+          foreignField: "_id",
+          as: "beneficiary"
+        }
+      },
+      { $unwind: "$beneficiary" },
+      // Apply the same beneficiaryQuery filters if any
+      { 
+        $match: Object.keys(beneficiaryQuery).reduce((acc: any, key) => {
+          acc[`beneficiary.${key}`] = beneficiaryQuery[key];
+          return acc;
+        }, {})
+      },
+      { $group: { _id: "$beneficiary.municipality", validated: { $sum: 1 } } }
+    ]);
+
+    // Merge targets and validated
+    const municipalityBreakdown = targets.map(t => {
+      const v = validated.find(val => val._id === t._id);
+      return {
+        municipality: t._id || "Unknown",
+        target: t.target,
+        validated: v ? v.validated : 0
+      };
+    });
+
     res.status(200).json({
       totalNES,
       attendanceStats,
+      periodStats,
       reasonStats,
-      periodStats
+      municipalityBreakdown
     });
   }
 );

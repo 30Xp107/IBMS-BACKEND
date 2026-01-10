@@ -596,3 +596,29 @@ export const bulkDeleteBeneficiaries = catchAsync(
   }
 );
 
+export const getAvailableFilters = catchAsync(
+  async (req: Request, res: Response) => {
+    const user = (req as any).user;
+    let query: any = {};
+
+    if (user.role !== "admin" && user.assigned_areas && user.assigned_areas.length > 0) {
+      const areaFilter = await getAreaFilter(user.assigned_areas);
+      if (areaFilter) {
+        query = areaFilter;
+      }
+    }
+
+    const regions = await Beneficiary.distinct("region", query);
+    const provinces = await Beneficiary.distinct("province", query);
+    const municipalities = await Beneficiary.distinct("municipality", query);
+    const barangays = await Beneficiary.distinct("barangay", query);
+
+    res.status(200).json({
+      regions: regions.filter(Boolean).sort(),
+      provinces: provinces.filter(Boolean).sort(),
+      municipalities: municipalities.filter(Boolean).sort(),
+      barangays: barangays.filter(Boolean).sort(),
+    });
+  }
+);
+

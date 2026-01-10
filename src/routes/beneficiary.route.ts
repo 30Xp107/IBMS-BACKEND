@@ -7,12 +7,14 @@ import {
   getBeneficiaries,
   updateBeneficiary,
   bulkDeleteBeneficiaries,
+  getAvailableFilters,
 } from "../controllers/beneficiary.controller";
 import { isAuthenticated, authorizeRoles } from "../middleware/auth";
 
 const router = express.Router();
 
 router.get("/", isAuthenticated, getBeneficiaries);
+router.get("/filters", isAuthenticated, getAvailableFilters);
 router.post("/", isAuthenticated, authorizeRoles("admin"), createBeneficiary);
 router.post("/bulk", isAuthenticated, authorizeRoles("admin"), bulkCreateBeneficiaries);
 router.post("/check-duplicates", isAuthenticated, authorizeRoles("admin"), checkDuplicates);
