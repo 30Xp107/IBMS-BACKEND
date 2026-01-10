@@ -106,3 +106,78 @@ export const getDashboardStats = catchAsync(
   }
 );
 
+export const getRedemptionDashboardStats = catchAsync(
+  async (req: Request, res: Response) => {
+    const user = (req as any).user;
+    let beneficiaryQuery: any = {};
+    if (user.role !== "admin" && user.assigned_areas && user.assigned_areas.length > 0) {
+      const areaFilter = await getAreaFilter(user.assigned_areas);
+      if (areaFilter) {
+        beneficiaryQuery = areaFilter;
+      }
+    }
+
+    const totalRedemptions = await Redemption.countDocuments({});
+    
+    // Get stats by attendance
+    const attendanceStats = await Redemption.aggregate([
+      { $group: { _id: "$attendance", count: { $sum: 1 } } }
+    ]);
+
+    // Get stats by FRM period
+    const periodStats = await Redemption.aggregate([
+      { $group: { _id: "$frm_period", count: { $sum: 1 } } },
+      { $sort: { _id: -1 } },
+      { $limit: 12 }
+    ]);
+
+    res.status(200).json({
+      totalRedemptions,
+      attendanceStats,
+      periodStats
+    });
+  }
+);
+
+export const getNESDashboardStats = catchAsync(
+  async (req: Request, res: Response) => {
+    const user = (req as any).user;
+    let beneficiaryQuery: any = {};
+    if (user.role !== "admin" && user.assigned_areas && user.assigned_areas.length > 0) {
+      const areaFilter = await getAreaFilter(user.assigned_areas);
+      if (areaFilter) {
+        beneficiaryQuery = areaFilter;
+      }
+    }
+
+    const totalNES = await NES.countDocuments({});
+    
+    // Get stats by attendance
+    const attendanceStats = await NES.aggregate([
+      { $group: { _id: "$attendance", count: { $sum: 1 } } }
+    ]);
+
+    // Get stats by reason (top 5)
+    const reasonStats = await NES.aggregate([
+      { $match: { reason: { $ne: "" } } },
+      { $group: { _id: "$reason", count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 5 }
+    ]);
+
+    // Get stats by FRM period
+    const periodStats = await NES.aggregate([
+      { $group: { _id: "$frm_period", count: { $sum: 1 } } },
+      { $sort: { _id: -1 } },
+      { $limit: 12 }
+    ]);
+
+    res.status(200).json({
+      totalNES,
+      attendanceStats,
+      reasonStats,
+      periodStats
+    });
+  }
+);
+
