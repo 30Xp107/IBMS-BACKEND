@@ -43,7 +43,7 @@ const standardizeAreaNames = async (body: any) => {
 export const getBeneficiaries = catchAsync(
   async (req: Request, res: Response) => {
     const user = (req as any).user;
-    const { barangay, municipality, province, region, search, page = 1, limit = 10, sort = "createdAt", order = "desc" } = req.query;
+    const { barangay, municipality, province, region, status, search, page = 1, limit = 10, sort = "createdAt", order = "desc" } = req.query;
 
     const query: any = {};
 
@@ -88,6 +88,10 @@ export const getBeneficiaries = catchAsync(
     if (region && region !== "all") {
       const escapedValue = (region as string).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       query.region = { $regex: new RegExp(`^${escapedValue}$`, "i") };
+    }
+
+    if (status && status !== "all") {
+      query.status = status;
     }
 
     if (search) {

@@ -76,8 +76,19 @@ export const getNESRecords = catchAsync(
 );
 
 export const createNES = catchAsync(
-  async (req: Request, res: Response) => {
+  async (req: Request, res: Response, next: NextFunction) => {
     const user = (req as any).user;
+    const { beneficiary_id } = req.body;
+
+    const beneficiary = await Beneficiary.findById(beneficiary_id);
+    if (!beneficiary) {
+      return next(new ErrorHandler("Beneficiary not found", 404));
+    }
+
+    if (beneficiary.status === "Not for Recording") {
+      return next(new ErrorHandler("This beneficiary is set to 'Not for Recording' status", 400));
+    }
+
     const nes = await NES.create({
       ...req.body,
       recorded_by: user._id,
@@ -107,6 +118,15 @@ export const upsertNES = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const user = (req as any).user;
     const { beneficiary_id, hhid, frm_period, attendance, reason, action: actionTaken, date_recorded } = req.body;
+
+    const beneficiary = await Beneficiary.findById(beneficiary_id);
+    if (!beneficiary) {
+      return next(new ErrorHandler("Beneficiary not found", 404));
+    }
+
+    if (beneficiary.status === "Not for Recording") {
+      return next(new ErrorHandler("This beneficiary is set to 'Not for Recording' status", 400));
+    }
 
     const result = await NES.findOneAndUpdate(
       { beneficiary_id, frm_period },

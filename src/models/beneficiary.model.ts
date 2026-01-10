@@ -15,6 +15,7 @@ export interface IBeneficiary extends Document {
   region: string;
   contact?: string;
   is4ps?: string;
+  status: string;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -35,6 +36,11 @@ const beneficiarySchema = new Schema<IBeneficiary>(
     region: { type: String, default: "" },
     contact: { type: String, default: "" },
     is4ps: { type: String, default: "No" },
+    status: { 
+      type: String, 
+      enum: ["Active", "Inactive", "Not for Recording"], 
+      default: "Active" 
+    },
   },
   { timestamps: true }
 );
