@@ -253,25 +253,40 @@ export const getNESDashboardStats = catchAsync(
       { $limit: 5 }
     ]);
 
-    // Get stats by FRM period with target vs validated
+    // Get stats by FRM period with target vs attended vs absent
     const periodStatsRaw = await NES.aggregate([
-      { $match: { attendance: "present" } },
-      { $group: { _id: "$frm_period", validated: { $sum: 1 } } },
+      {
+        $group: {
+          _id: "$frm_period",
+          attended: {
+            $sum: { $cond: [{ $eq: ["$attendance", "present"] }, 1, 0] }
+          },
+          absent: {
+            $sum: { $cond: [{ $eq: ["$attendance", "absent"] }, 1, 0] }
+          }
+        }
+      },
       { $sort: { _id: -1 } },
       { $limit: 12 }
     ]);
 
-    const periodStats = periodStatsRaw.map(p => ({
-      period: p._id,
-      validated: p.validated,
-      target: totalBeneficiaries
-    }));
+    const periodStats = periodStatsRaw.map(p => {
+      const attended = p.attended || 0;
+      const absent = p.absent || 0;
+      return {
+        period: p._id,
+        attended,
+        absent,
+        remaining: totalBeneficiaries - attended - absent,
+        target: totalBeneficiaries
+      };
+    });
 
     // Get current month for municipality breakdown
     const now = new Date();
     const currentMonth = `${now.toLocaleString("default", { month: "long" })} ${now.getFullYear()}`;
 
-    // Get municipality breakdown (Target vs Validated)
+    // Get municipality breakdown (Target vs Attended vs Absent)
     // 1. Get targets (all beneficiaries per municipality)
     const targets = await Beneficiary.aggregate([
       { $match: beneficiaryQuery },
@@ -279,10 +294,9 @@ export const getNESDashboardStats = catchAsync(
       { $sort: { _id: 1 } }
     ]);
 
-    // 2. Get validated (NES records for current month per municipality)
-    // For NES, "validated" could mean "present"
-    const validated = await NES.aggregate([
-      { $match: { frm_period: currentMonth, attendance: "present" } },
+    // 2. Get recorded (NES records for current month per municipality)
+    const recorded = await NES.aggregate([
+      { $match: { frm_period: currentMonth } },
       {
         $addFields: {
           beneficiaryObjectId: { $toObjectId: "$beneficiary_id" }
@@ -304,16 +318,30 @@ export const getNESDashboardStats = catchAsync(
           return acc;
         }, {})
       },
-      { $group: { _id: "$beneficiary.municipality", validated: { $sum: 1 } } }
+      {
+        $group: {
+          _id: "$beneficiary.municipality",
+          attended: {
+            $sum: { $cond: [{ $eq: ["$attendance", "present"] }, 1, 0] }
+          },
+          absent: {
+            $sum: { $cond: [{ $eq: ["$attendance", "absent"] }, 1, 0] }
+          }
+        }
+      }
     ]);
 
-    // Merge targets and validated
+    // Merge targets and recorded
     const municipalityBreakdown = targets.map(t => {
-      const v = validated.find(val => val._id === t._id);
+      const rec = recorded.find(r => r._id === t._id);
+      const attended = rec ? rec.attended : 0;
+      const absent = rec ? rec.absent : 0;
       return {
         municipality: t._id || "Unknown",
         target: t.target,
-        validated: v ? v.validated : 0
+        attended,
+        absent,
+        remaining: t.target - attended - absent
       };
     });
 
