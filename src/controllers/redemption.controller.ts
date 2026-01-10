@@ -9,9 +9,15 @@ import { getAreaFilter } from "../utils/areaFilter";
 export const getRedemptions = catchAsync(
   async (req: Request, res: Response) => {
     const user = (req as any).user;
-    const { beneficiary_id, beneficiary_ids, hhid, frm_period, page = 1, limit = 10, search } = req.query;
+    const { beneficiary_id, beneficiary_ids, hhid, frm_period, page = 1, limit = 10, search, sort = "createdAt", order = "desc" } = req.query;
 
     const query: any = {};
+    
+    // Determine sort object
+    const sortField = sort as string;
+    const sortOrder = order === "asc" ? 1 : -1;
+    const sortObj: any = {};
+    sortObj[sortField] = sortOrder;
     if (beneficiary_id) query.beneficiary_id = beneficiary_id;
     if (beneficiary_ids) {
       query.beneficiary_id = { $in: (beneficiary_ids as string).split(",") };
@@ -44,7 +50,7 @@ export const getRedemptions = catchAsync(
     if (limit === "all") {
       const redemptions = await Redemption.find(query)
         .populate("recorded_by", "name email")
-        .sort({ createdAt: -1 });
+        .sort(sortObj);
       return res.status(200).json({ redemptions, total: redemptions.length });
     }
 
@@ -55,7 +61,7 @@ export const getRedemptions = catchAsync(
     const [redemptions, total] = await Promise.all([
       Redemption.find(query)
         .populate("recorded_by", "name email")
-        .sort({ createdAt: -1 })
+        .sort(sortObj)
         .skip(skip)
         .limit(limitNum),
       Redemption.countDocuments(query)

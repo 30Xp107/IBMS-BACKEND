@@ -157,9 +157,15 @@ export const getMe = catchAsync(
 
 export const getuser = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
-    const { page = 1, limit = 10, search, status } = req.query;
+    const { page = 1, limit = 10, search, status, sort = "createdAt", order = "desc" } = req.query;
 
     const query: any = {};
+    
+    // Determine sort object
+    const sortField = sort as string;
+    const sortOrder = order === "asc" ? 1 : -1;
+    const sortObj: any = {};
+    sortObj[sortField] = sortOrder;
     if (search) {
       query.$or = [
         { name: { $regex: search as string, $options: "i" } },
@@ -188,7 +194,7 @@ export const getuser = catchAsync(
         .find(query)
         .select("-password")
         .populate("assigned_areas", "name")
-        .sort({ createdAt: -1 })
+        .sort(sortObj)
         .skip(skip)
         .limit(limitNum),
       userModel.countDocuments(query),

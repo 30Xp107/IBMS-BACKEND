@@ -4,9 +4,15 @@ import { catchAsync } from "../utils/catchAsync";
 
 export const getAuditLogs = catchAsync(
   async (req: Request, res: Response) => {
-    const { module, user_id, page = 1, limit = 50, search } = req.query;
+    const { module, user_id, page = 1, limit = 50, search, sort = "createdAt", order = "desc" } = req.query;
 
     const query: any = {};
+    
+    // Determine sort object
+    const sortField = sort as string;
+    const sortOrder = order === "asc" ? 1 : -1;
+    const sortObj: any = {};
+    sortObj[sortField] = sortOrder;
     if (module) query.module = module;
     if (user_id) query.user_id = user_id;
     
@@ -20,7 +26,7 @@ export const getAuditLogs = catchAsync(
     }
 
     if (limit === "all") {
-      const logs = await AuditLog.find(query).sort({ createdAt: -1 });
+      const logs = await AuditLog.find(query).sort(sortObj);
       return res.status(200).json({ logs, total: logs.length });
     }
 
@@ -30,7 +36,7 @@ export const getAuditLogs = catchAsync(
 
     const [logs, total] = await Promise.all([
       AuditLog.find(query)
-        .sort({ createdAt: -1 })
+        .sort(sortObj)
         .skip(skip)
         .limit(limitNum),
       AuditLog.countDocuments(query)

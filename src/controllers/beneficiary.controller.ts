@@ -43,9 +43,15 @@ const standardizeAreaNames = async (body: any) => {
 export const getBeneficiaries = catchAsync(
   async (req: Request, res: Response) => {
     const user = (req as any).user;
-    const { barangay, municipality, province, region, search, page = 1, limit = 10 } = req.query;
+    const { barangay, municipality, province, region, search, page = 1, limit = 10, sort = "createdAt", order = "desc" } = req.query;
 
     const query: any = {};
+
+    // Determine sort object
+    const sortField = sort as string;
+    const sortOrder = order === "asc" ? 1 : -1;
+    const sortObj: any = {};
+    sortObj[sortField] = sortOrder;
 
     // Filter by user's assigned areas if not admin
     if (user.role !== "admin" && user.assigned_areas && user.assigned_areas.length > 0) {
@@ -100,7 +106,7 @@ export const getBeneficiaries = catchAsync(
     }
 
     if (limit === "all") {
-      const beneficiaries = await Beneficiary.find(query).sort({ createdAt: -1 });
+      const beneficiaries = await Beneficiary.find(query).sort(sortObj);
       return res.status(200).json({ beneficiaries, total: beneficiaries.length });
     }
 
@@ -109,7 +115,7 @@ export const getBeneficiaries = catchAsync(
     const skip = (pageNum - 1) * limitNum;
 
     const [beneficiaries, total] = await Promise.all([
-      Beneficiary.find(query).sort({ createdAt: -1 }).skip(skip).limit(limitNum),
+      Beneficiary.find(query).sort(sortObj).skip(skip).limit(limitNum),
       Beneficiary.countDocuments(query)
     ]);
 

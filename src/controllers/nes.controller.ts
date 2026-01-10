@@ -9,7 +9,7 @@ import { getAreaFilter } from "../utils/areaFilter";
 export const getNESRecords = catchAsync(
   async (req: Request, res: Response) => {
     const user = (req as any).user;
-    const { beneficiary_id, beneficiary_ids, hhid, frm_period, page = 1, limit = 10, search } = req.query;
+    const { beneficiary_id, beneficiary_ids, hhid, frm_period, page = 1, limit = 10, search, sort = "createdAt", order = "desc" } = req.query;
 
     const query: any = {};
     if (beneficiary_id) query.beneficiary_id = beneficiary_id;
@@ -45,17 +45,22 @@ export const getNESRecords = catchAsync(
     const limitNum = limit === "all" ? 1000000 : parseInt(limit as string);
     const skip = (pageNum - 1) * limitNum;
 
+    const sortField = sort as string;
+    const sortOrder = order === "asc" ? 1 : -1;
+    const sortObj: any = {};
+    sortObj[sortField] = sortOrder;
+
     if (limit === "all") {
       const nesRecords = await NES.find(query)
         .populate("recorded_by", "name email")
-        .sort({ createdAt: -1 });
+        .sort(sortObj);
       return res.status(200).json(nesRecords);
     }
 
     const [nesRecords, total] = await Promise.all([
       NES.find(query)
         .populate("recorded_by", "name email")
-        .sort({ createdAt: -1 })
+        .sort(sortObj)
         .skip(skip)
         .limit(limitNum),
       NES.countDocuments(query)
