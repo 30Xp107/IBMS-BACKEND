@@ -283,11 +283,14 @@ export const getRedemptionDashboardStats = catchAsync(
       { $match: beneficiaryQuery },
       {
         $group: {
-          _id: { $toUpper: { $trim: { input: "$municipality" } } },
+          _id: {
+            municipality: { $toUpper: { $trim: { input: "$municipality" } } },
+            province: { $toUpper: { $trim: { input: "$province" } } }
+          },
           target: { $sum: 1 }
         }
       },
-      { $sort: { _id: 1 } }
+      { $sort: { "_id.municipality": 1 } }
     ]);
 
     // 2. Get recorded (redemptions for target period per municipality)
@@ -298,12 +301,16 @@ export const getRedemptionDashboardStats = catchAsync(
         $group: {
           _id: "$hhid",
           attendance: { $first: "$attendance" },
-          municipality: { $first: "$beneficiary.municipality" }
+          municipality: { $first: "$beneficiary.municipality" },
+          province: { $first: "$beneficiary.province" }
         }
       },
       {
         $group: {
-          _id: { $toUpper: { $trim: { input: "$municipality" } } },
+          _id: {
+            municipality: { $toUpper: { $trim: { input: "$municipality" } } },
+            province: { $toUpper: { $trim: { input: "$province" } } }
+          },
           redeemed: {
             $sum: { $cond: [{ $eq: ["$attendance", "present"] }, 1, 0] }
           },
@@ -316,12 +323,13 @@ export const getRedemptionDashboardStats = catchAsync(
 
     // Merge targets and recorded
     const municipalityBreakdown = targets.map(t => {
-      const rec = recorded.find(r => r._id === t._id);
+      const rec = recorded.find(r => r._id.municipality === t._id.municipality && r._id.province === t._id.province);
       const redeemed = rec ? rec.redeemed : 0;
       const unredeemed = rec ? rec.unredeemed : 0;
       const remaining = t.target - redeemed - unredeemed;
       return {
-        municipality: t._id || "Unknown",
+        municipality: t._id.municipality || "Unknown",
+        province: t._id.province || "Unknown",
         target: t.target,
         redeemed,
         unredeemed,
@@ -529,11 +537,14 @@ export const getNESDashboardStats = catchAsync(
       { $match: beneficiaryQuery },
       {
         $group: {
-          _id: { $toUpper: { $trim: { input: "$municipality" } } },
+          _id: {
+            municipality: { $toUpper: { $trim: { input: "$municipality" } } },
+            province: { $toUpper: { $trim: { input: "$province" } } }
+          },
           target: { $sum: 1 }
         }
       },
-      { $sort: { _id: 1 } }
+      { $sort: { "_id.municipality": 1 } }
     ]);
 
     // 2. Get recorded (NES records for target period per municipality)
@@ -544,12 +555,16 @@ export const getNESDashboardStats = catchAsync(
         $group: {
           _id: "$hhid",
           attendance: { $first: "$attendance" },
-          municipality: { $first: "$beneficiary.municipality" }
+          municipality: { $first: "$beneficiary.municipality" },
+          province: { $first: "$beneficiary.province" }
         }
       },
       {
         $group: {
-          _id: { $toUpper: { $trim: { input: "$municipality" } } },
+          _id: {
+            municipality: { $toUpper: { $trim: { input: "$municipality" } } },
+            province: { $toUpper: { $trim: { input: "$province" } } }
+          },
           attended: {
             $sum: { $cond: [{ $eq: ["$attendance", "present"] }, 1, 0] }
           },
@@ -562,12 +577,13 @@ export const getNESDashboardStats = catchAsync(
 
     // Merge targets and recorded
     const municipalityBreakdown = targets.map(t => {
-      const rec = recorded.find(r => r._id === t._id);
+      const rec = recorded.find(r => r._id.municipality === t._id.municipality && r._id.province === t._id.province);
       const attended = rec ? rec.attended : 0;
       const absent = rec ? rec.absent : 0;
       const remaining = t.target - attended - absent;
       return {
-        municipality: t._id || "Unknown",
+        municipality: t._id.municipality || "Unknown",
+        province: t._id.province || "Unknown",
         target: t.target,
         attended,
         absent,
