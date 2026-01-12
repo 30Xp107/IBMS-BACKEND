@@ -40,6 +40,9 @@ const standardizeAreaNames = async (body: any) => {
   }
 };
 
+import { Redemption } from "../models/redemption.model";
+import { NES } from "../models/nes.model";
+
 export const getBeneficiaries = catchAsync(
   async (req: Request, res: Response) => {
     const user = (req as any).user;
@@ -72,11 +75,6 @@ export const getBeneficiaries = catchAsync(
       const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?(\s*\(.+?\))?$/i);
       
       const core = (cityMatch?.[2] || muniMatch?.[2] || val).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      // Final robust pattern:
-      // 1. Matches core name (escaped)
-      // 2. Allows optional "City of" or "City" or "Municipality of" or "Municipality"
-      // 3. Allows optional suffix in parentheses at the end (e.g. " (Saravia)")
-      // 4. Case-insensitive
       const pattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)(\\s*\\(.+?\\))?$`;
       
       query.municipality = { $regex: new RegExp(pattern, "i") };
@@ -109,25 +107,77 @@ export const getBeneficiaries = catchAsync(
       }
     }
 
-    if (limit === "all") {
-      const beneficiaries = await Beneficiary.find(query).sort(sortObj);
-      return res.status(200).json({ beneficiaries, total: beneficiaries.length });
-    }
-
     const pageNum = parseInt(page as string);
-    const limitNum = parseInt(limit as string);
+    const limitNum = limit === "all" ? 0 : parseInt(limit as string);
     const skip = (pageNum - 1) * limitNum;
 
-    const [beneficiaries, total] = await Promise.all([
-      Beneficiary.find(query).sort(sortObj).skip(skip).limit(limitNum),
-      Beneficiary.countDocuments(query)
+    let beneficiaries;
+    let total;
+
+    if (limit === "all") {
+      beneficiaries = await Beneficiary.find(query).sort(sortObj);
+      total = beneficiaries.length;
+    } else {
+      [beneficiaries, total] = await Promise.all([
+        Beneficiary.find(query).sort(sortObj).skip(skip).limit(limitNum),
+        Beneficiary.countDocuments(query)
+      ]);
+    }
+
+    // Fetch Redemption and NES counts for each beneficiary
+    const beneficiaryIds = beneficiaries.map(b => b._id.toString());
+
+    const [redemptionStats, nesStats] = await Promise.all([
+      Redemption.aggregate([
+        { $match: { beneficiary_id: { $in: beneficiaryIds } } },
+        {
+          $group: {
+            _id: "$beneficiary_id",
+            redeemed: {
+              $sum: { $cond: [{ $eq: ["$attendance", "redeemed"] }, 1, 0] }
+            },
+            unredeemed: {
+              $sum: { $cond: [{ $eq: ["$attendance", "unredeemed"] }, 1, 0] }
+            }
+          }
+        }
+      ]),
+      NES.aggregate([
+        { $match: { beneficiary_id: { $in: beneficiaryIds } } },
+        {
+          $group: {
+            _id: "$beneficiary_id",
+            present: {
+              $sum: { $cond: [{ $eq: ["$attendance", "present"] }, 1, 0] }
+            },
+            absent: {
+              $sum: { $cond: [{ $eq: ["$attendance", "absent"] }, 1, 0] }
+            }
+          }
+        }
+      ])
     ]);
 
+    const redemptionMap = new Map(redemptionStats.map(s => [s._id, s]));
+    const nesMap = new Map(nesStats.map(s => [s._id, s]));
+
+    const beneficiariesWithStats = beneficiaries.map(b => {
+      const bObj = b.toObject();
+      const rStat = redemptionMap.get(b._id.toString()) || { redeemed: 0, unredeemed: 0 };
+      const nStat = nesMap.get(b._id.toString()) || { present: 0, absent: 0 };
+      
+      return {
+        ...bObj,
+        redemption_stats: rStat,
+        nes_stats: nStat
+      };
+    });
+
     res.status(200).json({
-      beneficiaries,
+      beneficiaries: beneficiariesWithStats,
       total,
       page: pageNum,
-      totalPages: Math.ceil(total / limitNum)
+      totalPages: limit === "all" ? 1 : Math.ceil(total / limitNum)
     });
   }
 );
