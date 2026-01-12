@@ -124,34 +124,78 @@ export const getBeneficiaries = catchAsync(
       ]);
     }
 
-    // Fetch Redemption and NES counts for each beneficiary
-    const beneficiaryIds = beneficiaries.map(b => b._id.toString());
+    // Fetch Redemption and NES counts for each beneficiary using HHID
+    const beneficiaryHhids = beneficiaries.map(b => b.hhid).filter(hhid => !!hhid);
 
     const [redemptionStats, nesStats] = await Promise.all([
       Redemption.aggregate([
-        { $match: { beneficiary_id: { $in: beneficiaryIds } } },
+        { 
+          $match: { 
+            hhid: { $in: beneficiaryHhids }
+          } 
+        },
         {
           $group: {
-            _id: "$beneficiary_id",
+            _id: "$hhid",
             redeemed: {
-              $sum: { $cond: [{ $eq: ["$attendance", "redeemed"] }, 1, 0] }
+              $sum: { 
+                $cond: [
+                  { $or: [
+                    { $eq: ["$attendance", "present"] },
+                    { $eq: ["$attendance", "redeemed"] }
+                  ]}, 
+                  1, 
+                  0
+                ] 
+              }
             },
             unredeemed: {
-              $sum: { $cond: [{ $eq: ["$attendance", "unredeemed"] }, 1, 0] }
+              $sum: { 
+                $cond: [
+                  { $or: [
+                    { $eq: ["$attendance", "absent"] },
+                    { $eq: ["$attendance", "unredeemed"] }
+                  ]}, 
+                  1, 
+                  0
+                ] 
+              }
             }
           }
         }
       ]),
       NES.aggregate([
-        { $match: { beneficiary_id: { $in: beneficiaryIds } } },
+        { 
+          $match: { 
+            hhid: { $in: beneficiaryHhids }
+          } 
+        },
         {
           $group: {
-            _id: "$beneficiary_id",
+            _id: "$hhid",
             present: {
-              $sum: { $cond: [{ $eq: ["$attendance", "present"] }, 1, 0] }
+              $sum: { 
+                $cond: [
+                  { $or: [
+                    { $eq: ["$attendance", "present"] },
+                    { $eq: ["$attendance", "redeemed"] }
+                  ]}, 
+                  1, 
+                  0
+                ] 
+              }
             },
             absent: {
-              $sum: { $cond: [{ $eq: ["$attendance", "absent"] }, 1, 0] }
+              $sum: { 
+                $cond: [
+                  { $or: [
+                    { $eq: ["$attendance", "absent"] },
+                    { $eq: ["$attendance", "unredeemed"] }
+                  ]}, 
+                  1, 
+                  0
+                ] 
+              }
             }
           }
         }
@@ -162,14 +206,11 @@ export const getBeneficiaries = catchAsync(
     const nesMap = new Map(nesStats.map(s => [s._id, s]));
 
     const beneficiariesWithStats = beneficiaries.map(b => {
-      const bObj = b.toObject();
-      const rStat = redemptionMap.get(b._id.toString()) || { redeemed: 0, unredeemed: 0 };
-      const nStat = nesMap.get(b._id.toString()) || { present: 0, absent: 0 };
-      
+      const hhid = b.hhid;
       return {
-        ...bObj,
-        redemption_stats: rStat,
-        nes_stats: nStat
+        ...b.toObject(),
+        redemption_stats: redemptionMap.get(hhid) || { redeemed: 0, unredeemed: 0 },
+        nes_stats: nesMap.get(hhid) || { present: 0, absent: 0 }
       };
     });
 

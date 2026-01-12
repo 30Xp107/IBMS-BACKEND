@@ -4,7 +4,7 @@ import http from 'http'
 import { app } from './app'
 import connectDB from './utils/db'
 
-const PORT = process.env.PORT || 5000
+const PORT = process.env.PORT || 5001
 
 const httpServer = http.createServer(app)
 
