@@ -51,10 +51,21 @@ export const getBeneficiaries = catchAsync(
     const query: any = {};
 
     // Determine sort object
-    const sortField = sort as string;
+    let sortField = sort as string;
     const sortOrder = order === "asc" ? 1 : -1;
     const sortObj: any = {};
-    sortObj[sortField] = sortOrder;
+    
+    // Add secondary sort for stability
+    if (sortField === "last_name") {
+      sortObj["last_name"] = sortOrder;
+      sortObj["first_name"] = 1;
+    } else {
+      sortObj[sortField] = sortOrder;
+      if (sortField !== "createdAt") {
+        sortObj["createdAt"] = -1;
+      }
+    }
+    sortObj["_id"] = -1; // Final fallback for absolute stability
 
     // Filter by user's assigned areas if not admin
     if (user.role !== "admin" && user.assigned_areas && user.assigned_areas.length > 0) {
@@ -536,6 +547,8 @@ export const updateBeneficiary = catchAsync(
       return next(new ErrorHandler("Beneficiary not found or you are not authorized to update it", 404));
     }
 
+    const oldData = JSON.stringify(beneficiary);
+
     // If area is being changed, check if the new area is also authorized
     if (user.role !== "admin" && (req.body.region || req.body.province || req.body.municipality || req.body.barangay)) {
       const assignedAreas = await Area.find({
@@ -587,7 +600,7 @@ export const updateBeneficiary = catchAsync(
     Object.assign(beneficiary, req.body);
     await beneficiary.save();
 
-    await logAudit(req, "UPDATE", "beneficiaries", beneficiary.id, "", JSON.stringify(req.body));
+    await logAudit(req, "UPDATE", "beneficiaries", beneficiary.id, oldData, JSON.stringify(beneficiary));
 
     res.status(200).json(beneficiary);
   }
@@ -595,14 +608,29 @@ export const updateBeneficiary = catchAsync(
 
 export const deleteBeneficiary = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
-    const beneficiary = await Beneficiary.findByIdAndDelete(req.params.id);
+    const user = (req as any).user;
+    
+    const query: any = { _id: req.params.id };
+    if (user.role !== "admin") {
+      const areaFilter = await getAreaFilter(user.assigned_areas);
+      if (areaFilter) {
+        query.$and = [areaFilter];
+      } else {
+        return next(new ErrorHandler("You are not assigned to any areas and cannot delete beneficiaries", 403));
+      }
+    }
+
+    const beneficiary = await Beneficiary.findOne(query);
     if (!beneficiary) {
       return next(new ErrorHandler("Beneficiary not found", 404));
     }
 
-    await logAudit(req, "DELETE", "beneficiaries", req.params.id, "", "Deleted single beneficiary");
+    const oldData = JSON.stringify(beneficiary);
+    await beneficiary.deleteOne();
 
-    res.status(204).json({ success: true });
+    await logAudit(req, "DELETE", "beneficiaries", beneficiary.id, oldData, "");
+
+    res.status(200).json({ message: "Beneficiary deleted" });
   }
 );
 

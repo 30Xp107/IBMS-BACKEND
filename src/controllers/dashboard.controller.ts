@@ -3,8 +3,10 @@ import { Beneficiary } from "../models/beneficiary.model";
 import { Redemption } from "../models/redemption.model";
 import { NES } from "../models/nes.model";
 import userModel from "../models/user.model";
+import { SystemConfig } from "../models/systemConfig.model";
 import { catchAsync } from "../utils/catchAsync";
 import { getAreaFilter } from "../utils/areaFilter";
+import { getFrmPeriod } from "../utils/frmHelpers";
 
 export const getDashboardStats = catchAsync(
   async (req: Request, res: Response) => {
@@ -76,28 +78,28 @@ export const getDashboardStats = catchAsync(
     const totalRedemptions = await getFilteredCount(Redemption);
     const totalNES = await getFilteredCount(NES);
 
-    // Get current month stats
-    const now = new Date();
-    const currentMonth = `${now.toLocaleString("default", { month: "long" })} ${now.getFullYear()}`;
+    // Get current FRM period stats
+    const currentPeriod = await getFrmPeriod();
+    const currentPeriodMatch = { $regex: new RegExp(`^\\s*${currentPeriod.trim()}\\s*$`, "i") };
 
-    const monthRedemptions = await getFilteredCount(Redemption, { frm_period: currentMonth });
-    const monthNES = await getFilteredCount(NES, { frm_period: currentMonth });
+    const monthRedemptions = await getFilteredCount(Redemption, { frm_period: currentPeriodMatch });
+    const monthNES = await getFilteredCount(NES, { frm_period: currentPeriodMatch });
 
-    // Attendance rates for current month
+    // Attendance rates for current period
     const presentRedemptions = await getFilteredCount(Redemption, {
-      frm_period: currentMonth,
-      attendance: "present",
+      frm_period: currentPeriodMatch,
+      attendance: { $in: ["present", "redeemed"] },
     });
     const presentNES = await getFilteredCount(NES, {
-      frm_period: currentMonth,
-      attendance: "present",
+      frm_period: currentPeriodMatch,
+      attendance: { $in: ["present", "redeemed"] },
     });
 
     const stats: any = {
       total_beneficiaries: totalBeneficiaries,
       total_redemptions: totalRedemptions,
       total_nes: totalNES,
-      current_month: currentMonth,
+      current_month: currentPeriod,
       month_redemptions: monthRedemptions,
       month_nes: monthNES,
       redemption_attendance_rate: monthRedemptions > 0
@@ -109,42 +111,41 @@ export const getDashboardStats = catchAsync(
       monthly_trends: []
     };
 
-    // Get the earliest record date to determine the start of the range
-    const firstRedemption = await Redemption.findOne({}).sort({ createdAt: 1 });
-    const firstNES = await NES.findOne({}).sort({ createdAt: 1 });
+    // Get the unique FRM periods from the database for trends
+    const [redemptionPeriods, nesPeriods] = await Promise.all([
+      Redemption.distinct("frm_period"),
+      NES.distinct("frm_period")
+    ]);
+
+    const allPeriodsSet = new Set<string>([...redemptionPeriods, ...nesPeriods]);
     
-    let startDate = new Date();
-    if (firstRedemption || firstNES) {
-      const dates = [];
-      if (firstRedemption) dates.push(new Date(firstRedemption.createdAt));
-      if (firstNES) dates.push(new Date(firstNES.createdAt));
-      startDate = new Date(Math.min(...dates.map(d => d.getTime())));
+    // Add custom schedules to the set if not already present
+    try {
+      const config = await SystemConfig.findOne({ key: "frm_schedules" });
+      if (config && Array.isArray(config.value)) {
+        config.value.forEach((s: any) => allPeriodsSet.add(s.name));
+      }
+    } catch (error) {
+      console.error("Error fetching FRM schedules for dashboard trends:", error);
     }
 
-    // Set to start of month
-    startDate.setDate(1);
-    
-    const allContinuousMonths = [];
-    const currentDate = new Date();
-    currentDate.setDate(1);
+    // Convert set to array and filter out empty values
+    const allPeriods = Array.from(allPeriodsSet).filter(p => !!p);
 
-    let tempDate = new Date(startDate);
-    while (tempDate <= currentDate) {
-      allContinuousMonths.push(`${tempDate.toLocaleString("default", { month: "long" })} ${tempDate.getFullYear()}`);
-      tempDate.setMonth(tempDate.getMonth() + 1);
-    }
+    // Sort periods - this is tricky without a date. 
+    // For now, we'll try to sort them. Monthly ones usually sort okay.
+    // Custom ones like "FRM 1" might need special handling.
+    // For a better experience, we'll sort them and take the last 12.
+    const sortedPeriods = allPeriods.sort((a, b) => b.localeCompare(a)).slice(0, 12).reverse();
 
-    // Get stats for each month
-    for (const monthStr of allContinuousMonths) {
-      const redemptions = await getFilteredCount(Redemption, { frm_period: monthStr });
-      const nes = await getFilteredCount(NES, { frm_period: monthStr });
-      
-      const [month, year] = monthStr.split(" ");
-      const date = new Date(`${month} 1, ${year}`);
+    // Get stats for each period
+    for (const periodStr of sortedPeriods) {
+      const redemptions = await getFilteredCount(Redemption, { frm_period: periodStr });
+      const nes = await getFilteredCount(NES, { frm_period: periodStr });
       
       stats.monthly_trends.push({
-        month: date.toLocaleString("default", { month: "short" }),
-        fullName: monthStr,
+        month: periodStr,
+        fullName: periodStr,
         redemptions,
         nes
       });
@@ -162,14 +163,15 @@ export const getDashboardStats = catchAsync(
 export const getRedemptionDashboardStats = catchAsync(
   async (req: Request, res: Response) => {
     const user = (req as any).user;
-    const { year, month, province, municipality } = req.query;
+    const { year, month, period, province, municipality } = req.query;
 
     let targetPeriod: string;
-    if (year && month) {
+    if (period) {
+      targetPeriod = period.toString();
+    } else if (year && month) {
       targetPeriod = `${month} ${year}`;
     } else {
-      const now = new Date();
-      targetPeriod = `${now.toLocaleString("default", { month: "long" })} ${now.getFullYear()}`;
+      targetPeriod = await getFrmPeriod();
     }
 
     let beneficiaryQuery: any = { status: "Active" };
@@ -227,9 +229,13 @@ export const getRedemptionDashboardStats = catchAsync(
     const totalRedemptions = totalRedemptionsResult[0]?.total || 0;
     const totalBeneficiaries = await Beneficiary.countDocuments(beneficiaryQuery);
     
+    const periodMatch = { 
+      frm_period: { $regex: new RegExp(`^\\s*${targetPeriod.trim()}\\s*$`, "i") } 
+    };
+
     // Get stats by attendance (Filtered for target period)
     const attendanceStats = await Redemption.aggregate([
-      { $match: { frm_period: targetPeriod } },
+      { $match: periodMatch },
       ...filteredRedemptionsAggregation,
       {
         $group: {
@@ -237,7 +243,24 @@ export const getRedemptionDashboardStats = catchAsync(
           attendance: { $first: "$attendance" }
         }
       },
-      { $group: { _id: "$attendance", count: { $sum: 1 } } }
+      {
+        $group: {
+          _id: {
+            $cond: [
+              { $in: ["$attendance", ["present", "redeemed"]] },
+              "present",
+              {
+                $cond: [
+                  { $in: ["$attendance", ["absent", "unredeemed"]] },
+                  "absent",
+                  "none"
+                ]
+              }
+            ]
+          },
+          count: { $sum: 1 }
+        }
+      }
     ]);
 
     // Get stats by FRM period (Filtered - last 12 periods)
@@ -253,10 +276,28 @@ export const getRedemptionDashboardStats = catchAsync(
         $group: {
           _id: "$_id.period",
           redeemed: {
-            $sum: { $cond: [{ $eq: ["$attendance", "present"] }, 1, 0] }
+            $sum: { 
+              $cond: [
+                { $or: [
+                  { $eq: ["$attendance", "present"] },
+                  { $eq: ["$attendance", "redeemed"] }
+                ]}, 
+                1, 
+                0
+              ] 
+            }
           },
           unredeemed: {
-            $sum: { $cond: [{ $eq: ["$attendance", "absent"] }, 1, 0] }
+            $sum: { 
+              $cond: [
+                { $or: [
+                  { $eq: ["$attendance", "absent"] },
+                  { $eq: ["$attendance", "unredeemed"] }
+                ]}, 
+                1, 
+                0
+              ] 
+            }
           }
         }
       },
@@ -295,7 +336,7 @@ export const getRedemptionDashboardStats = catchAsync(
 
     // 2. Get recorded (redemptions for target period per municipality)
     const recorded = await Redemption.aggregate([
-      { $match: { frm_period: targetPeriod } },
+      { $match: periodMatch },
       ...filteredRedemptionsAggregation,
       {
         $group: {
@@ -312,10 +353,28 @@ export const getRedemptionDashboardStats = catchAsync(
             province: { $toUpper: { $trim: { input: "$province" } } }
           },
           redeemed: {
-            $sum: { $cond: [{ $eq: ["$attendance", "present"] }, 1, 0] }
+            $sum: { 
+              $cond: [
+                { $or: [
+                  { $eq: ["$attendance", "present"] },
+                  { $eq: ["$attendance", "redeemed"] }
+                ]}, 
+                1, 
+                0
+              ] 
+            }
           },
           unredeemed: {
-            $sum: { $cond: [{ $eq: ["$attendance", "absent"] }, 1, 0] }
+            $sum: { 
+              $cond: [
+                { $or: [
+                  { $eq: ["$attendance", "absent"] },
+                  { $eq: ["$attendance", "unredeemed"] }
+                ]}, 
+                1, 
+                0
+              ] 
+            }
           }
         }
       }
@@ -352,7 +411,7 @@ export const getRedemptionDashboardStats = catchAsync(
 
     // 2. Get recorded (redemptions for target period per province)
     const provinceRecorded = await Redemption.aggregate([
-      { $match: { frm_period: targetPeriod } },
+      { $match: periodMatch },
       ...filteredRedemptionsAggregation,
       {
         $group: {
@@ -365,10 +424,28 @@ export const getRedemptionDashboardStats = catchAsync(
         $group: {
           _id: { $toUpper: { $trim: { input: "$province" } } },
           redeemed: {
-            $sum: { $cond: [{ $eq: ["$attendance", "present"] }, 1, 0] }
+            $sum: { 
+              $cond: [
+                { $or: [
+                  { $eq: ["$attendance", "present"] },
+                  { $eq: ["$attendance", "redeemed"] }
+                ]}, 
+                1, 
+                0
+              ] 
+            }
           },
           unredeemed: {
-            $sum: { $cond: [{ $eq: ["$attendance", "absent"] }, 1, 0] }
+            $sum: { 
+              $cond: [
+                { $or: [
+                  { $eq: ["$attendance", "absent"] },
+                  { $eq: ["$attendance", "unredeemed"] }
+                ]}, 
+                1, 
+                0
+              ] 
+            }
           }
         }
       }
@@ -401,14 +478,15 @@ export const getRedemptionDashboardStats = catchAsync(
 export const getNESDashboardStats = catchAsync(
   async (req: Request, res: Response) => {
     const user = (req as any).user;
-    const { year, month, province, municipality } = req.query;
+    const { year, month, period, province, municipality } = req.query;
 
     let targetPeriod: string;
-    if (year && month) {
+    if (period) {
+      targetPeriod = period.toString();
+    } else if (year && month) {
       targetPeriod = `${month} ${year}`;
     } else {
-      const now = new Date();
-      targetPeriod = `${now.toLocaleString("default", { month: "long" })} ${now.getFullYear()}`;
+      targetPeriod = await getFrmPeriod();
     }
 
     let beneficiaryQuery: any = { status: "Active" };
@@ -466,9 +544,13 @@ export const getNESDashboardStats = catchAsync(
     const totalNES = totalNESResult[0]?.total || 0;
     const totalBeneficiaries = await Beneficiary.countDocuments(beneficiaryQuery);
     
+    const periodMatch = { 
+      frm_period: { $regex: new RegExp(`^\\s*${targetPeriod.trim()}\\s*$`, "i") } 
+    };
+
     // Get stats by attendance (Filtered for target period)
     const attendanceStats = await NES.aggregate([
-      { $match: { frm_period: targetPeriod } },
+      { $match: periodMatch },
       ...filteredNESAggregation,
       {
         $group: {
@@ -476,12 +558,35 @@ export const getNESDashboardStats = catchAsync(
           attendance: { $first: "$attendance" }
         }
       },
-      { $group: { _id: "$attendance", count: { $sum: 1 } } }
+      {
+        $group: {
+          _id: {
+            $cond: [
+              { $in: ["$attendance", ["present", "redeemed"]] },
+              "present",
+              {
+                $cond: [
+                  { $in: ["$attendance", ["absent", "unredeemed"]] },
+                  "absent",
+                  "none"
+                ]
+              }
+            ]
+          },
+          count: { $sum: 1 }
+        }
+      }
     ]);
 
     // Get stats by top reasons for non-attendance (Filtered for target period)
     const reasonStats = await NES.aggregate([
-      { $match: { frm_period: targetPeriod, attendance: "absent", reason: { $ne: "" } } },
+      { 
+        $match: { 
+          ...periodMatch, 
+          attendance: { $in: ["absent", "unredeemed"] }, 
+          reason: { $ne: "" } 
+        } 
+      },
       ...filteredNESAggregation,
       {
         $group: {
@@ -507,10 +612,28 @@ export const getNESDashboardStats = catchAsync(
         $group: {
           _id: "$_id.period",
           attended: {
-            $sum: { $cond: [{ $eq: ["$attendance", "present"] }, 1, 0] }
+            $sum: { 
+              $cond: [
+                { $or: [
+                  { $eq: ["$attendance", "present"] },
+                  { $eq: ["$attendance", "redeemed"] }
+                ]}, 
+                1, 
+                0
+              ] 
+            }
           },
           absent: {
-            $sum: { $cond: [{ $eq: ["$attendance", "absent"] }, 1, 0] }
+            $sum: { 
+              $cond: [
+                { $or: [
+                  { $eq: ["$attendance", "absent"] },
+                  { $eq: ["$attendance", "unredeemed"] }
+                ]}, 
+                1, 
+                0
+              ] 
+            }
           }
         }
       },
@@ -549,7 +672,7 @@ export const getNESDashboardStats = catchAsync(
 
     // 2. Get recorded (NES records for target period per municipality)
     const recorded = await NES.aggregate([
-      { $match: { frm_period: targetPeriod } },
+      { $match: periodMatch },
       ...filteredNESAggregation,
       {
         $group: {
@@ -566,10 +689,28 @@ export const getNESDashboardStats = catchAsync(
             province: { $toUpper: { $trim: { input: "$province" } } }
           },
           attended: {
-            $sum: { $cond: [{ $eq: ["$attendance", "present"] }, 1, 0] }
+            $sum: { 
+              $cond: [
+                { $or: [
+                  { $eq: ["$attendance", "present"] },
+                  { $eq: ["$attendance", "redeemed"] }
+                ]}, 
+                1, 
+                0
+              ] 
+            }
           },
           absent: {
-            $sum: { $cond: [{ $eq: ["$attendance", "absent"] }, 1, 0] }
+            $sum: { 
+              $cond: [
+                { $or: [
+                  { $eq: ["$attendance", "absent"] },
+                  { $eq: ["$attendance", "unredeemed"] }
+                ]}, 
+                1, 
+                0
+              ] 
+            }
           }
         }
       }
@@ -606,7 +747,7 @@ export const getNESDashboardStats = catchAsync(
 
     // 2. Get recorded (NES records for target period per province)
     const provinceRecorded = await NES.aggregate([
-      { $match: { frm_period: targetPeriod } },
+      { $match: periodMatch },
       ...filteredNESAggregation,
       {
         $group: {
@@ -619,10 +760,28 @@ export const getNESDashboardStats = catchAsync(
         $group: {
           _id: { $toUpper: { $trim: { input: "$province" } } },
           attended: {
-            $sum: { $cond: [{ $eq: ["$attendance", "present"] }, 1, 0] }
+            $sum: { 
+              $cond: [
+                { $or: [
+                  { $eq: ["$attendance", "present"] },
+                  { $eq: ["$attendance", "redeemed"] }
+                ]}, 
+                1, 
+                0
+              ] 
+            }
           },
           absent: {
-            $sum: { $cond: [{ $eq: ["$attendance", "absent"] }, 1, 0] }
+            $sum: { 
+              $cond: [
+                { $or: [
+                  { $eq: ["$attendance", "absent"] },
+                  { $eq: ["$attendance", "unredeemed"] }
+                ]}, 
+                1, 
+                0
+              ] 
+            }
           }
         }
       }

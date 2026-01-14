@@ -19,7 +19,10 @@ export const register = catchAsync(
     const existing = await userModel.findOne({ email });
     if (existing) return next(new ErrorHandler("Email Already Used", 400)); 
     // Create user with default status "pending" - they cannot login until approved
-    await userModel.create({ name, email, password });
+    const user = await userModel.create({ name, email, password });
+
+    await logAudit(req, "CREATE", "users", user.id, "", JSON.stringify({ name, email }));
+
     // Don't log them in - they need admin approval first
     res.status(201).json({
       success: true,
@@ -58,6 +61,9 @@ export const login = catchAsync(
     const access = signAccessToken({ id: user._id });
     const refresh = signRefreshToken({ id: user._id });
     attachTokens(res, access, refresh);
+
+    await logAudit(req, "LOGIN", "users", user.id, "", "User logged in");
+
     res.json({
       success: true,
       user: {
@@ -104,6 +110,14 @@ export const updateUser = catchAsync(
 
     if (!user) return next(new ErrorHandler("User not found", 404));
 
+    const oldData = JSON.stringify({
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      status: user.status,
+      assigned_areas: user.assigned_areas
+    });
+
     if (email) {
       const isEmailExist = await userModel.findOne({ email });
 
@@ -123,8 +137,8 @@ export const updateUser = catchAsync(
       "UPDATE",
       "users",
       user.id,
-      "",
-      JSON.stringify({ name, email, role })
+      oldData,
+      JSON.stringify({ name: user.name, email: user.email, role: user.role })
     );
 
     const { password: pass, ...updatedUser } = (user as any)._doc;
@@ -165,7 +179,18 @@ export const getuser = catchAsync(
     const sortField = sort as string;
     const sortOrder = order === "asc" ? 1 : -1;
     const sortObj: any = {};
-    sortObj[sortField] = sortOrder;
+    
+    // Add secondary sort for stability
+    if (sortField === "name") {
+      sortObj["name"] = sortOrder;
+      sortObj["createdAt"] = -1;
+    } else {
+      sortObj[sortField] = sortOrder;
+      if (sortField !== "createdAt") {
+        sortObj["createdAt"] = -1;
+      }
+    }
+    sortObj["_id"] = -1; // Final fallback for absolute stability
     if (search) {
       query.$or = [
         { name: { $regex: search as string, $options: "i" } },
@@ -181,7 +206,7 @@ export const getuser = catchAsync(
         .find(query)
         .select("-password")
         .populate("assigned_areas", "name")
-        .sort({ createdAt: -1 });
+        .sort(sortObj);
       return res.status(200).json({ success: true, users, total: users.length });
     }
 
@@ -220,6 +245,14 @@ export const approveUser = catchAsync(
       return next(new ErrorHandler("User not found", 404));
     }
 
+    const oldData = JSON.stringify({
+      status: user.status,
+      assigned_areas: user.assigned_areas,
+      role: user.role,
+      name: user.name,
+      email: user.email
+    });
+
     if (status) user.status = status as "pending" | "approved" | "rejected";
     if (assigned_areas && Array.isArray(assigned_areas)) {
       // Filter out invalid IDs and remove duplicates
@@ -247,8 +280,8 @@ export const approveUser = catchAsync(
       "UPDATE",
       "users",
       user.id,
-      "",
-      JSON.stringify({ status, assigned_areas, role, name, email })
+      oldData,
+      JSON.stringify({ status, assigned_areas: user.assigned_areas, role, name, email })
     );
 
     const updatedUser = await userModel.findById(id).select("-password").populate("assigned_areas", "name");

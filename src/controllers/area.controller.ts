@@ -47,13 +47,14 @@ export const getAreas = catchAsync(
     sortOptions[sort as string] = sortOrder;
     // Add secondary sort for stability
     if (sort !== "code") sortOptions["code"] = 1;
+    sortOptions["_id"] = 1; // Final fallback for absolute stability
 
     // If limit is "all", don't paginate (be careful with this for large datasets)
     if (limit === "all") {
       const areas = await Area.find(query)
         .populate("parent_id", "name code")
         .sort(sortOptions);
-      return res.status(200).json(areas);
+      return res.status(200).json({ areas, total: areas.length, page: 1, totalPages: 1 });
     }
 
     const pageNum = parseInt(page as string);
@@ -109,6 +110,8 @@ export const updateArea = catchAsync(
       return next(new ErrorHandler("Area not found", 404));
     }
 
+    const oldData = JSON.stringify(area);
+
     // Handle parent_id if it's an object (from population) or empty
     if (req.body.parent_id && typeof req.body.parent_id === 'object' && req.body.parent_id._id) {
       req.body.parent_id = req.body.parent_id._id;
@@ -120,7 +123,7 @@ export const updateArea = catchAsync(
     Object.assign(area, req.body);
     await area.save();
 
-    await logAudit(req, "UPDATE", "areas", area.id, "", JSON.stringify(req.body));
+    await logAudit(req, "UPDATE", "areas", area.id, oldData, JSON.stringify(area));
 
     res.status(200).json(area);
   }

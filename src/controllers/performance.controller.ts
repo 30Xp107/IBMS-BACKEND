@@ -4,6 +4,7 @@ import { AuthRequest } from "../middleware/auth";
 import dotenv from "dotenv";
 import ErrorHandler from "../utils/ErrorHandler";
 import { catchAsync } from "../utils/catchAsync";
+import { logAudit } from "../utils/auditLogger";
 dotenv.config();
 
 export const rateEmployee = catchAsync(
@@ -16,6 +17,9 @@ export const rateEmployee = catchAsync(
       comment,
       ratee: rater?._id,
     });
+
+    await logAudit(req, "CREATE", "performance", rate.id, "", JSON.stringify(rate));
+
     res.status(201).json({ success: true, rate });
   }
 );
@@ -35,6 +39,12 @@ export const editRate = catchAsync(
     const { id } = req.params;
     const performanceRate = req.body;
 
+    const existingRate = await performanceModel.findById(id);
+    if (!existingRate)
+      return next(new ErrorHandler("Performance not Found", 404));
+
+    const oldData = JSON.stringify(existingRate);
+
     const updatedPerformance = await performanceModel.findByIdAndUpdate(
       id,
       { $set: performanceRate },
@@ -43,6 +53,8 @@ export const editRate = catchAsync(
 
     if (!updatedPerformance)
       return next(new ErrorHandler("Performance not Found", 404));
+
+    await logAudit(req, "UPDATE", "performance", updatedPerformance.id, oldData, JSON.stringify(updatedPerformance));
 
     res.status(200).json({
       success: true,

@@ -29,6 +29,7 @@ export const getConfig = catchAsync(
         description: "Required fields for beneficiary import",
         updatedBy: (req as any).user._id,
       });
+      await logAudit(req, "CREATE", "system_configs", config.id, "", JSON.stringify(config.value));
     }
 
     if (!config) {
@@ -53,14 +54,15 @@ export const updateConfig = catchAsync(
         value,
         updatedBy: (req as any).user._id,
       });
+      await config.save();
+      await logAudit(req, "CREATE", "system_configs", config.id, "", JSON.stringify(value));
     } else {
       const oldVal = JSON.stringify(config.value);
       config.value = value;
       config.updatedBy = (req as any).user._id;
+      await config.save();
       await logAudit(req, "UPDATE", "system_configs", config.id, oldVal, JSON.stringify(value));
     }
-
-    await config.save();
     res.status(200).json(config);
   }
 );

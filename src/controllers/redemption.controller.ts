@@ -14,10 +14,21 @@ export const getRedemptions = catchAsync(
     const query: any = {};
     
     // Determine sort object
-    const sortField = sort as string;
+    let sortField = sort as string;
     const sortOrder = order === "asc" ? 1 : -1;
     const sortObj: any = {};
-    sortObj[sortField] = sortOrder;
+    
+    // Add secondary sort for stability
+    if (sortField === "hhid") {
+      sortObj["hhid"] = sortOrder;
+      sortObj["createdAt"] = -1;
+    } else {
+      sortObj[sortField] = sortOrder;
+      if (sortField !== "createdAt") {
+        sortObj["createdAt"] = -1;
+      }
+    }
+    sortObj["_id"] = -1; // Final fallback for absolute stability
     if (beneficiary_id) query.beneficiary_id = beneficiary_id;
     if (beneficiary_ids) {
       query.beneficiary_id = { $in: (beneficiary_ids as string).split(",") };
@@ -106,10 +117,12 @@ export const updateRedemption = catchAsync(
       return next(new ErrorHandler("Redemption not found", 404));
     }
 
+    const oldData = JSON.stringify(redemption);
+
     Object.assign(redemption, req.body);
     await redemption.save();
 
-    await logAudit(req, "UPDATE", "redemptions", redemption.id, "", JSON.stringify(req.body));
+    await logAudit(req, "UPDATE", "redemptions", redemption.id, oldData, JSON.stringify(redemption));
 
     res.status(200).json(redemption);
   }
@@ -128,6 +141,10 @@ export const upsertRedemption = catchAsync(
     if (beneficiary.status === "Not for Recording") {
       return next(new ErrorHandler("This beneficiary is set to 'Not for Recording' status", 400));
     }
+
+    // Find existing record to capture old data
+    const existingRedemption = await Redemption.findOne({ beneficiary_id, frm_period });
+    const oldData = existingRedemption ? JSON.stringify(existingRedemption) : "";
 
     const result = await Redemption.findOneAndUpdate(
       { beneficiary_id, frm_period },
@@ -148,7 +165,7 @@ export const upsertRedemption = catchAsync(
     const action = result.lastErrorObject?.updatedExisting ? "UPDATE" : "CREATE";
 
     if (redemption) {
-      await logAudit(req, action, "redemptions", redemption.id, "", JSON.stringify(redemption));
+      await logAudit(req, action, "redemptions", redemption.id, oldData, JSON.stringify(redemption));
       res.status(200).json(redemption);
     } else {
       return next(new ErrorHandler("Failed to record redemption", 500));

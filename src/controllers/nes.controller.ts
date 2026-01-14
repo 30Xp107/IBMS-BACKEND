@@ -45,10 +45,22 @@ export const getNESRecords = catchAsync(
     const limitNum = limit === "all" ? 1000000 : parseInt(limit as string);
     const skip = (pageNum - 1) * limitNum;
 
-    const sortField = sort as string;
+    // Determine sort object
+    let sortField = sort as string;
     const sortOrder = order === "asc" ? 1 : -1;
     const sortObj: any = {};
-    sortObj[sortField] = sortOrder;
+    
+    // Add secondary sort for stability
+    if (sortField === "hhid") {
+      sortObj["hhid"] = sortOrder;
+      sortObj["createdAt"] = -1;
+    } else {
+      sortObj[sortField] = sortOrder;
+      if (sortField !== "createdAt") {
+        sortObj["createdAt"] = -1;
+      }
+    }
+    sortObj["_id"] = -1; // Final fallback for absolute stability
 
     if (limit === "all") {
       const nesRecords = await NES.find(query)
@@ -105,10 +117,12 @@ export const updateNES = catchAsync(
       return next(new ErrorHandler("NES record not found", 404));
     }
 
+    const oldData = JSON.stringify(nes);
+
     Object.assign(nes, req.body);
     await nes.save();
 
-    await logAudit(req, "UPDATE", "nes", nes.id, "", JSON.stringify(req.body));
+    await logAudit(req, "UPDATE", "nes", nes.id, oldData, JSON.stringify(nes));
 
     res.status(200).json(nes);
   }
@@ -127,6 +141,10 @@ export const upsertNES = catchAsync(
     if (beneficiary.status === "Not for Recording") {
       return next(new ErrorHandler("This beneficiary is set to 'Not for Recording' status", 400));
     }
+
+    // Find existing record to capture old data
+    const existingNES = await NES.findOne({ beneficiary_id, frm_period });
+    const oldData = existingNES ? JSON.stringify(existingNES) : "";
 
     const result = await NES.findOneAndUpdate(
       { beneficiary_id, frm_period },
@@ -147,7 +165,7 @@ export const upsertNES = catchAsync(
     const action = result.lastErrorObject?.updatedExisting ? "UPDATE" : "CREATE";
     
     if (nes) {
-      await logAudit(req, action, "nes", nes.id, "", JSON.stringify(nes));
+      await logAudit(req, action, "nes", nes.id, oldData, JSON.stringify(nes));
       res.status(200).json(nes);
     } else {
       return next(new ErrorHandler("Failed to record NES", 500));

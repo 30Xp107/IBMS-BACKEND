@@ -9,10 +9,18 @@ export const getAuditLogs = catchAsync(
     const query: any = {};
     
     // Determine sort object
-    const sortField = sort as string;
+    let sortField = sort as string;
+    if (sortField === "timestamp") sortField = "createdAt";
+    
     const sortOrder = order === "asc" ? 1 : -1;
     const sortObj: any = {};
     sortObj[sortField] = sortOrder;
+    
+    // Add secondary sort for stability if not sorting by createdAt
+    if (sortField !== "createdAt") {
+      sortObj["createdAt"] = -1;
+    }
+    sortObj["_id"] = -1; // Final fallback for absolute stability
     if (module) query.module = module;
     if (user_id) query.user_id = user_id;
     
