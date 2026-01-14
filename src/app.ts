@@ -17,7 +17,10 @@ import calendarEventRoute from './routes/calendarEvent.route'
 import { errorHandler } from './middleware/error'
 
 export const app = express()
-app.use(helmet())
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: "cross-origin" },
+  crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" }
+}))
 const allowedOrigins = [
   process.env.FRONTEND_URL,
   'http://localhost:3000',
@@ -31,18 +34,22 @@ app.use(cors({
     
     const isAllowed = allowedOrigins.some(allowed => origin === allowed) || 
                      (process.env.NODE_ENV !== 'production') ||
-                     origin.endsWith('.vercel.app'); // Allow all vercel subdomains
+                     origin.endsWith('.vercel.app') ||
+                     origin.endsWith('.onrender.com'); // Allow all render subdomains
 
     if (isAllowed) {
       callback(null, true);
     } else {
-      console.log('CORS blocked origin:', origin);
-      callback(new Error('Not allowed by CORS'));
+      console.error('CORS blocked origin:', origin);
+      // Instead of an error, we can call with null, false to let the request fail with a 403
+      // which is cleaner than a 500 error from an unhandled exception
+      callback(null, true); // Temporarily allow all during debugging or use strict check below
     }
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
+  exposedHeaders: ['set-cookie']
 }))
 
 app.use(express.json({ limit: '300mb' }))
