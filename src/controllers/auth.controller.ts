@@ -5,6 +5,7 @@ import {
   signRefreshToken,
   attachTokens,
   verifyRefreshToken,
+  getCookieOptions,
 } from "../utils/jwt";
 import jwt from "jsonwebtoken";
 import dotenv from "dotenv";
@@ -79,11 +80,7 @@ export const login = catchAsync(
 );
 
 export const logout = (req: Request, res: Response) => {
-  const cookieOptions = {
-    httpOnly: true,
-    secure: true,
-    sameSite: 'none' as const,
-  };
+  const cookieOptions = getCookieOptions();
   res.clearCookie("access_token", cookieOptions);
   res.clearCookie("refresh_token", cookieOptions);
   res.json({ success: true, message: "Logged out" });

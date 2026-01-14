@@ -22,15 +22,20 @@ export const verifyRefreshToken = (token: string) => {
   return jwt.verify(token, REFRESH_SECRET)
 }
 
-export const attachTokens = (res: Response, accessToken: string, refreshToken: string) => {
-  const isProd = process.env.NODE_ENV === 'production' || !!process.env.RENDER;
-  
-  const cookieOptions = {
+export const getCookieOptions = () => {
+  return {
     httpOnly: true,
     secure: true, // Always true for Render/HTTPS
     sameSite: 'none' as const, // Required for cross-site cookies
-    domain: process.env.COOKIE_DOMAIN || undefined,
+    // Only set domain if explicitly provided and NOT on onrender.com (which is a public suffix)
+    domain: (process.env.COOKIE_DOMAIN && !process.env.COOKIE_DOMAIN.endsWith('.onrender.com')) 
+      ? process.env.COOKIE_DOMAIN 
+      : undefined,
   };
+};
+
+export const attachTokens = (res: Response, accessToken: string, refreshToken: string) => {
+  const cookieOptions = getCookieOptions();
 
   res.cookie('access_token', accessToken, {
     ...cookieOptions,
