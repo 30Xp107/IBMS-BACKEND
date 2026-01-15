@@ -136,8 +136,8 @@ export const deleteCalendarEvent = catchAsync(
       return next(new ErrorHandler("Event not found", 404));
     }
 
-    // Only allow if owner
-    if (event.userId.toString() !== user._id.toString()) {
+    // Allow if owner or admin
+    if (event.userId.toString() !== user._id.toString() && user.role !== 'admin') {
       return next(new ErrorHandler("Unauthorized to delete this event", 403));
     }
 
