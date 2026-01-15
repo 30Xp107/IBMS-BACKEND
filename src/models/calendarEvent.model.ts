@@ -8,6 +8,7 @@ export interface ICalendarEvent extends Document {
   allDay: boolean;
   type: 'task' | 'event' | 'meeting' | 'deadline';
   userId: Types.ObjectId;
+  isShared: boolean;
   color?: string;
   status: 'pending' | 'completed' | 'cancelled';
   createdAt: Date;
@@ -45,6 +46,10 @@ const calendarEventSchema = new Schema<ICalendarEvent>(
       type: Schema.Types.ObjectId,
       ref: 'User',
       required: true,
+    },
+    isShared: {
+      type: Boolean,
+      default: false,
     },
     color: {
       type: String,

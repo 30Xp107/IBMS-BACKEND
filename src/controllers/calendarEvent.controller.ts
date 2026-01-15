@@ -10,7 +10,20 @@ export const getCalendarEvents = catchAsync(
     const user = (req as any).user;
     const { start, end } = req.query;
 
-    const query: any = { userId: user._id };
+    let query: any = {};
+
+    if (user.role === 'admin') {
+      // Admins can see all events
+      query = {};
+    } else {
+      // Users see their own events OR events shared by admins
+      query = {
+        $or: [
+          { userId: user._id },
+          { isShared: true }
+        ]
+      };
+    }
 
     // Filter by date range if provided
     if (start && end) {
@@ -20,7 +33,9 @@ export const getCalendarEvents = catchAsync(
       };
     }
 
-    const events = await CalendarEvent.find(query).sort({ start: 1 });
+    const events = await CalendarEvent.find(query)
+      .populate("userId", "name email role")
+      .sort({ start: 1 });
 
     res.status(200).json({
       success: true,
@@ -33,11 +48,15 @@ export const getCalendarEvents = catchAsync(
 export const createCalendarEvent = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const user = (req as any).user;
+    const { isShared, ...eventData } = req.body;
 
     const event = await CalendarEvent.create({
-      ...req.body,
+      ...eventData,
+      isShared: user.role === 'admin' ? isShared : false,
       userId: user._id,
     });
+
+    await event.populate("userId", "name email role");
 
     await logAudit(req, "CREATE", "calendar_events", event.id, "", JSON.stringify(event));
 
@@ -54,19 +73,30 @@ export const updateCalendarEvent = catchAsync(
     const user = (req as any).user;
     const { id } = req.params;
 
-    let event = await CalendarEvent.findOne({ _id: id, userId: user._id });
+    let event = await CalendarEvent.findById(id);
 
     if (!event) {
-      return next(new ErrorHandler("Event not found or unauthorized", 404));
+      return next(new ErrorHandler("Event not found", 404));
+    }
+
+    // Only allow if owner OR admin
+    if (event.userId.toString() !== user._id.toString() && user.role !== 'admin') {
+      return next(new ErrorHandler("Unauthorized to update this event", 403));
     }
 
     const oldData = JSON.stringify(event);
+    
+    const updateData = { ...req.body };
+    // Users cannot change isShared status
+    if (user.role !== 'admin') {
+      delete updateData.isShared;
+    }
 
     event = await CalendarEvent.findByIdAndUpdate(
       id,
-      { ...req.body },
+      { $set: updateData },
       { new: true, runValidators: true }
-    );
+    ).populate("userId", "name email role");
 
     await logAudit(req, "UPDATE", "calendar_events", id, oldData, JSON.stringify(event));
 
@@ -83,10 +113,15 @@ export const deleteCalendarEvent = catchAsync(
     const user = (req as any).user;
     const { id } = req.params;
 
-    const event = await CalendarEvent.findOne({ _id: id, userId: user._id });
+    const event = await CalendarEvent.findById(id);
 
     if (!event) {
-      return next(new ErrorHandler("Event not found or unauthorized", 404));
+      return next(new ErrorHandler("Event not found", 404));
+    }
+
+    // Only allow if owner OR admin
+    if (event.userId.toString() !== user._id.toString() && user.role !== 'admin') {
+      return next(new ErrorHandler("Unauthorized to delete this event", 403));
     }
 
     const oldData = JSON.stringify(event);
