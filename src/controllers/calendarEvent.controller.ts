@@ -96,8 +96,8 @@ export const updateCalendarEvent = catchAsync(
       return next(new ErrorHandler("Event not found", 404));
     }
 
-    // Only allow if owner OR admin
-    if (event.userId.toString() !== user._id.toString() && user.role !== 'admin') {
+    // Only allow if owner
+    if (event.userId.toString() !== user._id.toString()) {
       return next(new ErrorHandler("Unauthorized to update this event", 403));
     }
 
@@ -136,8 +136,8 @@ export const deleteCalendarEvent = catchAsync(
       return next(new ErrorHandler("Event not found", 404));
     }
 
-    // Only allow if owner OR admin
-    if (event.userId.toString() !== user._id.toString() && user.role !== 'admin') {
+    // Only allow if owner
+    if (event.userId.toString() !== user._id.toString()) {
       return next(new ErrorHandler("Unauthorized to delete this event", 403));
     }
 
