@@ -27,10 +27,27 @@ export const getCalendarEvents = catchAsync(
 
     // Filter by date range if provided
     if (start && end) {
-      query.start = {
-        $gte: new Date(start as string),
-        $lte: new Date(end as string),
+      const s = new Date(start as string);
+      const e = new Date(end as string);
+
+      const dateFilter = {
+        $or: [
+          {
+            start: { $lte: e },
+            end: { $gte: s }
+          },
+          {
+            start: { $gte: s, $lte: e },
+            $or: [{ end: { $exists: false } }, { end: null }]
+          }
+        ]
       };
+
+      if (query.$or) {
+        query = { $and: [{ $or: query.$or }, dateFilter] };
+      } else {
+        Object.assign(query, dateFilter);
+      }
     }
 
     const events = await CalendarEvent.find(query)
