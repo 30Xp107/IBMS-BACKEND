@@ -30,39 +30,22 @@ export const getDashboardStats = catchAsync(
       beneficiaryQuery.municipality = { $regex: new RegExp(`^\\s*${municipality.toString().trim()}\\s*$`, "i") };
     }
 
+    // Fetch HHIDs once for all subsequent queries
+    const beneficiaries = await Beneficiary.find(beneficiaryQuery).select("hhid").lean();
+    const hhidList = beneficiaries.map(b => b.hhid).filter(h => !!h);
+
     // Filter aggregation helper for redemptions/NES
     const getFilteredCount = async (model: any, additionalQuery: any = {}) => {
+      if (hhidList.length === 0) return 0;
+
       const aggregation = [
         {
-          $lookup: {
-            from: "beneficiaries",
-            let: { hhid: "$hhid" },
-            pipeline: [
-              {
-                $match: {
-                  $expr: {
-                    $eq: [
-                      { $toUpper: { $trim: { input: "$hhid" } } },
-                      { $toUpper: { $trim: { input: "$$hhid" } } }
-                    ]
-                  }
-                }
-              }
-            ],
-            as: "beneficiary"
-          }
-        },
-        { $unwind: "$beneficiary" },
-        { 
           $match: {
             ...additionalQuery,
-            ...Object.keys(beneficiaryQuery).reduce((acc: any, key) => {
-              acc[`beneficiary.${key}`] = beneficiaryQuery[key];
-              return acc;
-            }, {})
+            hhid: { $in: hhidList }
           }
         },
-        // Unique per HHID and period (if period is in query) or just unique per HHID/period overall
+        // Unique per HHID and period
         {
           $group: {
             _id: { hhid: "$hhid", period: "$frm_period" }
@@ -74,26 +57,38 @@ export const getDashboardStats = catchAsync(
       return result[0]?.total || 0;
     };
 
-    const totalBeneficiaries = await Beneficiary.countDocuments(beneficiaryQuery);
-    const totalRedemptions = await getFilteredCount(Redemption);
-    const totalNES = await getFilteredCount(NES);
+    const [
+      totalBeneficiaries,
+      totalRedemptions,
+      totalNES,
+      currentPeriod
+    ] = await Promise.all([
+      Beneficiary.countDocuments(beneficiaryQuery),
+      getFilteredCount(Redemption),
+      getFilteredCount(NES),
+      getFrmPeriod()
+    ]);
 
     // Get current FRM period stats
-    const currentPeriod = await getFrmPeriod();
     const currentPeriodMatch = { $regex: new RegExp(`^\\s*${currentPeriod.trim()}\\s*$`, "i") };
 
-    const monthRedemptions = await getFilteredCount(Redemption, { frm_period: currentPeriodMatch });
-    const monthNES = await getFilteredCount(NES, { frm_period: currentPeriodMatch });
-
-    // Attendance rates for current period
-    const presentRedemptions = await getFilteredCount(Redemption, {
-      frm_period: currentPeriodMatch,
-      attendance: { $in: ["present", "redeemed"] },
-    });
-    const presentNES = await getFilteredCount(NES, {
-      frm_period: currentPeriodMatch,
-      attendance: { $in: ["present", "redeemed"] },
-    });
+    const [
+      monthRedemptions,
+      monthNES,
+      presentRedemptions,
+      presentNES
+    ] = await Promise.all([
+      getFilteredCount(Redemption, { frm_period: currentPeriodMatch }),
+      getFilteredCount(NES, { frm_period: currentPeriodMatch }),
+      getFilteredCount(Redemption, {
+        frm_period: currentPeriodMatch,
+        attendance: { $in: ["present", "redeemed"] },
+      }),
+      getFilteredCount(NES, {
+        frm_period: currentPeriodMatch,
+        attendance: { $in: ["present", "redeemed"] },
+      })
+    ]);
 
     const stats: any = {
       total_beneficiaries: totalBeneficiaries,

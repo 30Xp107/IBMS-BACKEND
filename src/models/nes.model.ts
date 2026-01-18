@@ -27,5 +27,11 @@ const nesSchema = new Schema<INES>(
   { timestamps: true }
 );
 
+// Add indexes for performance
+nesSchema.index({ hhid: 1 });
+nesSchema.index({ beneficiary_id: 1 });
+nesSchema.index({ frm_period: 1 });
+nesSchema.index({ hhid: 1, frm_period: 1 });
+
 export const NES = mongoose.model<INES>("NES", nesSchema);
 

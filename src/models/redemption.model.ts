@@ -27,5 +27,11 @@ const redemptionSchema = new Schema<IRedemption>(
   { timestamps: true }
 );
 
+// Add indexes for performance
+redemptionSchema.index({ hhid: 1 });
+redemptionSchema.index({ beneficiary_id: 1 });
+redemptionSchema.index({ frm_period: 1 });
+redemptionSchema.index({ hhid: 1, frm_period: 1 });
+
 export const Redemption = mongoose.model<IRedemption>("Redemption", redemptionSchema);
 

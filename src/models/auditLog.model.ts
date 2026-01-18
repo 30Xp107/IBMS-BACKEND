@@ -27,5 +27,11 @@ const auditLogSchema = new Schema<IAuditLog>(
   { timestamps: true }
 );
 
+// Add indexes for performance
+auditLogSchema.index({ createdAt: -1 });
+auditLogSchema.index({ user_id: 1 });
+auditLogSchema.index({ module: 1 });
+auditLogSchema.index({ record_id: 1 });
+
 export const AuditLog = mongoose.model<IAuditLog>("AuditLog", auditLogSchema);
 

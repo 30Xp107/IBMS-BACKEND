@@ -65,6 +65,9 @@ const calendarEventSchema = new Schema<ICalendarEvent>(
 );
 
 // Index for faster queries
-calendarEventSchema.index({ userId: 1, start: 1 });
+calendarEventSchema.index({ userId: 1, start: 1, end: 1 });
+calendarEventSchema.index({ isShared: 1, start: 1, end: 1 });
+calendarEventSchema.index({ start: 1 });
+calendarEventSchema.index({ end: 1 });
 
 export const CalendarEvent = mongoose.model<ICalendarEvent>('CalendarEvent', calendarEventSchema);
