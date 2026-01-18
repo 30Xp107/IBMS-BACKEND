@@ -9,8 +9,6 @@
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "moduleResolution": "node",
-    "typeRoots": ["./node_modules/@types"],
-    "types": ["node", "express"],
     "lib": ["esnext", "dom"]
   },
   "include": ["src/**/*"],
