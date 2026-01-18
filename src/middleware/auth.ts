@@ -9,6 +9,8 @@ const ACCESS_SECRET = process.env.ACCESS_TOKEN_SECRET || "access_secret";
 
 export interface AuthRequest extends Request {
   user?: any;
+  body: any;
+  cookies: any;
 }
 
 export const isAuthenticated = async (
