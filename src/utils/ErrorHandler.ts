@@ -1,10 +1,14 @@
 class ErrorHandler extends Error {
-    statusCode:Number
-    constructor(message:any, statusCode:Number){
+    statusCode: number
+    constructor(message: any, statusCode: number) {
         super(message)
         this.statusCode = statusCode
 
-        Error.captureStackTrace(this, this.constructor)
+        // @ts-ignore
+        if (Error.captureStackTrace) {
+            // @ts-ignore
+            Error.captureStackTrace(this, this.constructor)
+        }
     }
 }
 

@@ -31,14 +31,14 @@ const importPSGC = async () => {
     }
 
     const data = fs.readFileSync(absolutePath, "utf8");
-    const lines = data.split(/\r?\n/).filter(line => line.trim() !== "");
+    const lines = data.split(/\r?\n/).filter((line: string) => line.trim() !== "");
     
     // Attempt to detect columns from header
     const header = lines[0].toLowerCase();
     const columns = header.split(",");
-    const codeIdx = columns.findIndex(c => c.includes("code"));
-    const nameIdx = columns.findIndex(c => c.includes("name") || c.includes("description"));
-    const levelIdx = columns.findIndex(c => c.includes("level") || c.includes("geographic"));
+    const codeIdx = columns.findIndex((c: string) => c.includes("code"));
+    const nameIdx = columns.findIndex((c: string) => c.includes("name") || c.includes("description"));
+    const levelIdx = columns.findIndex((c: string) => c.includes("level") || c.includes("geographic"));
 
     if (codeIdx === -1 || nameIdx === -1 || levelIdx === -1) {
       console.error("CSV must contain 'Code', 'Name', and 'Level' columns.");
