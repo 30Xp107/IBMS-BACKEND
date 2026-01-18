@@ -12,18 +12,13 @@ export const getCalendarEvents = catchAsync(
 
     let query: any = {};
 
-    if (user.role === 'admin') {
-      // Admins can see all events
-      query = {};
-    } else {
-      // Users see their own events OR events shared by admins
-      query = {
-        $or: [
-          { userId: user._id },
-          { isShared: true }
-        ]
-      };
-    }
+    // Everyone sees their own events OR events shared by admins
+    query = {
+      $or: [
+        { userId: user._id },
+        { isShared: true }
+      ]
+    };
 
     // Filter by date range if provided
     if (start && end) {
