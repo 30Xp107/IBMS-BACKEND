@@ -29,12 +29,36 @@ export const getRedemptions = catchAsync(
       }
     }
     sortObj["_id"] = -1; // Final fallback for absolute stability
-    if (beneficiary_id) query.beneficiary_id = beneficiary_id;
+    if (beneficiary_id) {
+      if (typeof beneficiary_id === 'string' && beneficiary_id.length === 24) {
+        try {
+          const objId = new (require('mongoose').Types.ObjectId)(beneficiary_id);
+          query.beneficiary_id = { $in: [beneficiary_id, objId] };
+        } catch (e) {
+          query.beneficiary_id = beneficiary_id;
+        }
+      } else {
+        query.beneficiary_id = beneficiary_id;
+      }
+    }
     if (beneficiary_ids) {
-      query.beneficiary_id = { $in: (beneficiary_ids as string).split(",") };
+      const ids = (beneficiary_ids as string).split(",");
+      const objIds = ids.map(id => {
+        try {
+          return id.length === 24 ? new (require('mongoose').Types.ObjectId)(id) : null;
+        } catch (e) {
+          return null;
+        }
+      }).filter(id => id !== null);
+      
+      query.beneficiary_id = { $in: [...ids, ...objIds] };
     }
     if (hhid) query.hhid = hhid;
-    if (frm_period) query.frm_period = frm_period;
+    if (frm_period) {
+      const escapeRegex = (string: string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const escapedPeriod = escapeRegex((frm_period as string).trim());
+      query.frm_period = { $regex: new RegExp(`^\\s*${escapedPeriod}\\s*$`, "i") };
+    }
 
     if (search) {
       query.$or = [
@@ -45,16 +69,20 @@ export const getRedemptions = catchAsync(
 
     if (user.role !== "admin" && user.assigned_areas && user.assigned_areas.length > 0) {
       const areaFilter = await getAreaFilter(user.assigned_areas);
-      const beneficiaries = await Beneficiary.find(areaFilter || {}).select("hhid");
+      const beneficiaries = await Beneficiary.find(areaFilter || {}).select("_id");
 
-      const allowedHhids = beneficiaries.map((b) => b.hhid);
+      const allowedBeneficiaryIds = beneficiaries.map((b) => b._id.toString());
 
-      if (query.hhid) {
-        if (typeof query.hhid === 'string' && !allowedHhids.includes(query.hhid)) {
+      if (query.beneficiary_id) {
+        if (typeof query.beneficiary_id === 'string' && !allowedBeneficiaryIds.includes(query.beneficiary_id)) {
           return res.status(200).json({ redemptions: [], total: 0, page: 1, totalPages: 0 });
         }
+      } else if (query.beneficiary_ids) {
+        // Handle beneficiary_ids already in query (from $in)
+        const ids = query.beneficiary_id.$in || [];
+        query.beneficiary_id = { $in: ids.filter((id: string) => allowedBeneficiaryIds.includes(id)) };
       } else {
-        query.hhid = { $in: allowedHhids };
+        query.beneficiary_id = { $in: allowedBeneficiaryIds };
       }
     }
 

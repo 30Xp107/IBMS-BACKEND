@@ -8,6 +8,35 @@ import { catchAsync } from "../utils/catchAsync";
 import { getAreaFilter } from "../utils/areaFilter";
 import { getFrmPeriod } from "../utils/frmHelpers";
 
+/**
+ * Helper to prefix all keys in a query object for aggregation matches after a lookup.
+ * Correctiy handles nested $or, $and, and $nor operators.
+ */
+const prefixQueryKeys = (query: any, prefix: string): any => {
+  if (!query || typeof query !== 'object') return query;
+  
+  const prefixed: any = {};
+  for (const key in query) {
+    if (key === "$or" || key === "$and" || key === "$nor") {
+      if (Array.isArray(query[key])) {
+        prefixed[key] = query[key].map((subQuery: any) => prefixQueryKeys(subQuery, prefix));
+      } else {
+        prefixed[key] = query[key];
+      }
+    } else if (key.startsWith("$")) {
+      // Other operators like $expr, $match etc. at top level - keep as is
+      prefixed[key] = query[key];
+    } else {
+      prefixed[`${prefix}.${key}`] = query[key];
+    }
+  }
+  return prefixed;
+};
+
+const escapeRegex = (string: string) => {
+  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+};
+
 export const getDashboardStats = catchAsync(
   async (req: Request, res: Response) => {
     const user = (req as any).user;
@@ -24,31 +53,68 @@ export const getDashboardStats = catchAsync(
 
     // Additional filters from dropdowns
     if (province) {
-      beneficiaryQuery.province = { $regex: new RegExp(`^\\s*${province.toString().trim()}\\s*$`, "i") };
+      beneficiaryQuery.province = { $regex: new RegExp(`^\\s*${escapeRegex(province.toString().trim())}\\s*$`, "i") };
     }
     if (municipality) {
-      beneficiaryQuery.municipality = { $regex: new RegExp(`^\\s*${municipality.toString().trim()}\\s*$`, "i") };
+      beneficiaryQuery.municipality = { $regex: new RegExp(`^\\s*${escapeRegex(municipality.toString().trim())}\\s*$`, "i") };
     }
 
-    // Fetch HHIDs once for all subsequent queries
-    const beneficiaries = await Beneficiary.find(beneficiaryQuery).select("hhid").lean();
+    // Fetch beneficiary IDs and HHIDs once for all subsequent queries
+    const beneficiaries = await Beneficiary.find(beneficiaryQuery).select("_id hhid").lean();
+    const beneficiaryIdList = beneficiaries.map(b => b._id.toString());
     const hhidList = beneficiaries.map(b => b.hhid).filter(h => !!h);
 
     // Filter aggregation helper for redemptions/NES
     const getFilteredCount = async (model: any, additionalQuery: any = {}) => {
-      if (hhidList.length === 0) return 0;
+      if (beneficiaryIdList.length === 0) return 0;
+
+      // Convert string IDs to ObjectIds for matching if needed
+      const beneficiaryIdObjs = beneficiaryIdList.map(id => {
+        try {
+          return new (require('mongoose').Types.ObjectId)(id);
+        } catch (e) {
+          return null;
+        }
+      }).filter(id => id !== null);
 
       const aggregation = [
         {
           $match: {
             ...additionalQuery,
-            hhid: { $in: hhidList }
+            $or: [
+              { beneficiary_id: { $in: beneficiaryIdList } },
+              { beneficiary_id: { $in: beneficiaryIdObjs } },
+              { hhid: { $in: hhidList } }
+            ]
           }
         },
-        // Unique per HHID and period
+        // Normalize beneficiary_id for grouping
+        {
+          $addFields: {
+            norm_beneficiary_id: {
+              $cond: {
+                if: { $eq: [{ $type: "$beneficiary_id" }, "objectId"] },
+                then: "$beneficiary_id",
+                else: {
+                  $cond: {
+                    if: { $and: [
+                      { $ne: ["$beneficiary_id", ""] },
+                      { $ne: ["$beneficiary_id", null] },
+                      { $eq: [{ $type: "$beneficiary_id" }, "string"] },
+                      { $eq: [{ $strLenCP: "$beneficiary_id" }, 24] }
+                    ]},
+                    then: { $toObjectId: "$beneficiary_id" },
+                    else: "$beneficiary_id"
+                  }
+                }
+              }
+            }
+          }
+        },
+        // Unique per beneficiary and period
         {
           $group: {
-            _id: { hhid: "$hhid", period: "$frm_period" }
+            _id: { beneficiary_id: "$norm_beneficiary_id", period: "$frm_period" }
           }
         },
         { $count: "total" }
@@ -70,7 +136,8 @@ export const getDashboardStats = catchAsync(
     ]);
 
     // Get current FRM period stats
-    const currentPeriodMatch = { $regex: new RegExp(`^\\s*${currentPeriod.trim()}\\s*$`, "i") };
+    const escapedCurrentPeriod = escapeRegex(currentPeriod.trim());
+    const currentPeriodMatch = { $regex: new RegExp(`^\\s*${escapedCurrentPeriod}\\s*$`, "i") };
 
     const [
       monthRedemptions,
@@ -181,51 +248,84 @@ export const getRedemptionDashboardStats = catchAsync(
 
     // Additional filters from dropdowns
     if (province) {
-      beneficiaryQuery.province = { $regex: new RegExp(`^\\s*${province.toString().trim()}\\s*$`, "i") };
+      beneficiaryQuery.province = { $regex: new RegExp(`^\\s*${escapeRegex(province.toString().trim())}\\s*$`, "i") };
     }
     if (municipality) {
-      beneficiaryQuery.municipality = { $regex: new RegExp(`^\\s*${municipality.toString().trim()}\\s*$`, "i") };
+      beneficiaryQuery.municipality = { $regex: new RegExp(`^\\s*${escapeRegex(municipality.toString().trim())}\\s*$`, "i") };
     }
 
     // Filter redemptions by area using a join with Beneficiary collection
     const filteredRedemptionsAggregation = [
       {
+        $addFields: {
+          beneficiary_id_obj: {
+            $cond: {
+              if: { $eq: [{ $type: "$beneficiary_id" }, "objectId"] },
+              then: "$beneficiary_id",
+              else: {
+                $cond: {
+                  if: { $and: [
+                    { $ne: ["$beneficiary_id", ""] },
+                    { $ne: ["$beneficiary_id", null] },
+                    { $eq: [{ $type: "$beneficiary_id" }, "string"] },
+                    { $eq: [{ $strLenCP: "$beneficiary_id" }, 24] }
+                  ]},
+                  then: { $toObjectId: "$beneficiary_id" },
+                  else: null
+                }
+              }
+            }
+          },
+          norm_beneficiary_id: { $toString: "$beneficiary_id" }
+        }
+      },
+      {
         $lookup: {
           from: "beneficiaries",
-          let: { redemptionHhid: "$hhid" },
+          let: { b_id: "$beneficiary_id_obj", h_id: "$hhid", b_id_str: "$norm_beneficiary_id" },
           pipeline: [
             {
               $match: {
                 $expr: {
-                  $eq: [
-                    { $toUpper: { $trim: { input: "$hhid" } } },
-                    { $toUpper: { $trim: { input: "$$redemptionHhid" } } }
+                  $or: [
+                    { $eq: ["$_id", "$$b_id"] },
+                    { $eq: [{ $toString: "$_id" }, "$$b_id_str"] },
+                    { 
+                      $and: [
+                        { $ne: ["$$h_id", ""] },
+                        { $ne: ["$$h_id", null] },
+                        { $eq: ["$hhid", "$$h_id"] }
+                      ]
+                    }
                   ]
                 }
               }
-            }
+            },
+            { $limit: 1 }
           ],
           as: "beneficiary"
         }
       },
       { $unwind: "$beneficiary" },
-      { 
-        $match: Object.keys(beneficiaryQuery).reduce((acc: any, key) => {
-          acc[`beneficiary.${key}`] = beneficiaryQuery[key];
-          return acc;
-        }, {})
-      }
+      { $match: prefixQueryKeys(beneficiaryQuery, "beneficiary") }
     ];
 
     const totalRedemptionsResult = await Redemption.aggregate([
       ...filteredRedemptionsAggregation,
+      {
+        $group: {
+          _id: { beneficiary_id: "$beneficiary._id", period: "$frm_period" }
+        }
+      },
       { $count: "total" }
     ]);
     const totalRedemptions = totalRedemptionsResult[0]?.total || 0;
     const totalBeneficiaries = await Beneficiary.countDocuments(beneficiaryQuery);
     
+    // Escape regex special characters in the period name (like parentheses)
+    const escapedPeriod = escapeRegex(targetPeriod.trim());
     const periodMatch = { 
-      frm_period: { $regex: new RegExp(`^\\s*${targetPeriod.trim()}\\s*$`, "i") } 
+      frm_period: { $regex: new RegExp(`^\\s*${escapedPeriod}\\s*$`, "i") } 
     };
 
     // Get stats by attendance (Filtered for target period)
@@ -234,7 +334,7 @@ export const getRedemptionDashboardStats = catchAsync(
       ...filteredRedemptionsAggregation,
       {
         $group: {
-          _id: "$hhid",
+          _id: "$beneficiary._id",
           attendance: { $first: "$attendance" }
         }
       },
@@ -263,7 +363,7 @@ export const getRedemptionDashboardStats = catchAsync(
       ...filteredRedemptionsAggregation,
       {
         $group: {
-          _id: { hhid: "$hhid", period: "$frm_period" },
+          _id: { beneficiary_id: "$beneficiary._id", period: "$frm_period" },
           attendance: { $first: "$attendance" }
         }
       },
@@ -335,7 +435,7 @@ export const getRedemptionDashboardStats = catchAsync(
       ...filteredRedemptionsAggregation,
       {
         $group: {
-          _id: "$hhid",
+          _id: "$beneficiary._id",
           attendance: { $first: "$attendance" },
           municipality: { $first: "$beneficiary.municipality" },
           province: { $first: "$beneficiary.province" }
@@ -410,7 +510,7 @@ export const getRedemptionDashboardStats = catchAsync(
       ...filteredRedemptionsAggregation,
       {
         $group: {
-          _id: "$hhid",
+          _id: "$beneficiary._id",
           attendance: { $first: "$attendance" },
           province: { $first: "$beneficiary.province" }
         }
@@ -496,51 +596,84 @@ export const getNESDashboardStats = catchAsync(
 
     // Additional filters from dropdowns
     if (province) {
-      beneficiaryQuery.province = { $regex: new RegExp(`^\\s*${province.toString().trim()}\\s*$`, "i") };
+      beneficiaryQuery.province = { $regex: new RegExp(`^\\s*${escapeRegex(province.toString().trim())}\\s*$`, "i") };
     }
     if (municipality) {
-      beneficiaryQuery.municipality = { $regex: new RegExp(`^\\s*${municipality.toString().trim()}\\s*$`, "i") };
+      beneficiaryQuery.municipality = { $regex: new RegExp(`^\\s*${escapeRegex(municipality.toString().trim())}\\s*$`, "i") };
     }
 
     // Filter NES records by area using a join with Beneficiary collection
     const filteredNESAggregation = [
       {
+        $addFields: {
+          beneficiary_id_obj: {
+            $cond: {
+              if: { $eq: [{ $type: "$beneficiary_id" }, "objectId"] },
+              then: "$beneficiary_id",
+              else: {
+                $cond: {
+                  if: { $and: [
+                    { $ne: ["$beneficiary_id", ""] },
+                    { $ne: ["$beneficiary_id", null] },
+                    { $eq: [{ $type: "$beneficiary_id" }, "string"] },
+                    { $eq: [{ $strLenCP: "$beneficiary_id" }, 24] }
+                  ]},
+                  then: { $toObjectId: "$beneficiary_id" },
+                  else: null
+                }
+              }
+            }
+          },
+          norm_beneficiary_id: { $toString: "$beneficiary_id" }
+        }
+      },
+      {
         $lookup: {
           from: "beneficiaries",
-          let: { nesHhid: "$hhid" },
+          let: { b_id: "$beneficiary_id_obj", h_id: "$hhid", b_id_str: "$norm_beneficiary_id" },
           pipeline: [
             {
               $match: {
                 $expr: {
-                  $eq: [
-                    { $toUpper: { $trim: { input: "$hhid" } } },
-                    { $toUpper: { $trim: { input: "$$nesHhid" } } }
+                  $or: [
+                    { $eq: ["$_id", "$$b_id"] },
+                    { $eq: [{ $toString: "$_id" }, "$$b_id_str"] },
+                    { 
+                      $and: [
+                        { $ne: ["$$h_id", ""] },
+                        { $ne: ["$$h_id", null] },
+                        { $eq: ["$hhid", "$$h_id"] }
+                      ]
+                    }
                   ]
                 }
               }
-            }
+            },
+            { $limit: 1 }
           ],
           as: "beneficiary"
         }
       },
       { $unwind: "$beneficiary" },
-      { 
-        $match: Object.keys(beneficiaryQuery).reduce((acc: any, key) => {
-          acc[`beneficiary.${key}`] = beneficiaryQuery[key];
-          return acc;
-        }, {})
-      }
+      { $match: prefixQueryKeys(beneficiaryQuery, "beneficiary") }
     ];
 
     const totalNESResult = await NES.aggregate([
       ...filteredNESAggregation,
+      {
+        $group: {
+          _id: { beneficiary_id: "$beneficiary._id", period: "$frm_period" }
+        }
+      },
       { $count: "total" }
     ]);
     const totalNES = totalNESResult[0]?.total || 0;
     const totalBeneficiaries = await Beneficiary.countDocuments(beneficiaryQuery);
     
+    // Escape regex special characters in the period name (like parentheses)
+    const escapedPeriod = escapeRegex(targetPeriod.trim());
     const periodMatch = { 
-      frm_period: { $regex: new RegExp(`^\\s*${targetPeriod.trim()}\\s*$`, "i") } 
+      frm_period: { $regex: new RegExp(`^\\s*${escapedPeriod}\\s*$`, "i") } 
     };
 
     // Get stats by attendance (Filtered for target period)
@@ -549,7 +682,7 @@ export const getNESDashboardStats = catchAsync(
       ...filteredNESAggregation,
       {
         $group: {
-          _id: "$hhid",
+          _id: "$beneficiary._id",
           attendance: { $first: "$attendance" }
         }
       },
@@ -585,7 +718,7 @@ export const getNESDashboardStats = catchAsync(
       ...filteredNESAggregation,
       {
         $group: {
-          _id: "$hhid",
+          _id: "$beneficiary._id",
           reason: { $first: "$reason" }
         }
       },
@@ -599,7 +732,7 @@ export const getNESDashboardStats = catchAsync(
       ...filteredNESAggregation,
       {
         $group: {
-          _id: { hhid: "$hhid", period: "$frm_period" },
+          _id: { beneficiary_id: "$beneficiary._id", period: "$frm_period" },
           attendance: { $first: "$attendance" }
         }
       },
@@ -671,7 +804,7 @@ export const getNESDashboardStats = catchAsync(
       ...filteredNESAggregation,
       {
         $group: {
-          _id: "$hhid",
+          _id: "$beneficiary._id",
           attendance: { $first: "$attendance" },
           municipality: { $first: "$beneficiary.municipality" },
           province: { $first: "$beneficiary.province" }
@@ -746,7 +879,7 @@ export const getNESDashboardStats = catchAsync(
       ...filteredNESAggregation,
       {
         $group: {
-          _id: "$hhid",
+          _id: "$beneficiary._id",
           attendance: { $first: "$attendance" },
           province: { $first: "$beneficiary.province" }
         }
