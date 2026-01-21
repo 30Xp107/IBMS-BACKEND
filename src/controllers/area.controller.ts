@@ -4,6 +4,19 @@ import ErrorHandler from "../utils/ErrorHandler";
 import { catchAsync } from "../utils/catchAsync";
 import { logAudit } from "../utils/auditLogger";
 
+/**
+ * Standardizes a string to Title Case
+ */
+const normalizeArea = (str: string | undefined | null): string => {
+  if (!str) return "";
+  return str
+    .trim()
+    .toLowerCase()
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+};
+
 export const getAreas = catchAsync(
   async (req: Request, res: Response) => {
     const { type, parent_id, parent_code, search, code, page = 1, limit = 100, sort = "code", order = "asc" } = req.query;
@@ -97,6 +110,12 @@ export const createArea = catchAsync(
     if (req.body.parent_id === "" || req.body.parent_id === "null" || !req.body.parent_id) {
       req.body.parent_id = null;
     }
+    
+    // Normalize area name
+    if (req.body.name) {
+      req.body.name = normalizeArea(req.body.name);
+    }
+
     const area = await Area.create(req.body);
     await logAudit(req, "CREATE", "areas", area.id, "", JSON.stringify(area));
     res.status(201).json(area);
@@ -118,6 +137,11 @@ export const updateArea = catchAsync(
     }
     if (req.body.parent_id === "" || req.body.parent_id === "null") {
       req.body.parent_id = null;
+    }
+
+    // Normalize area name
+    if (req.body.name) {
+      req.body.name = normalizeArea(req.body.name);
     }
 
     Object.assign(area, req.body);

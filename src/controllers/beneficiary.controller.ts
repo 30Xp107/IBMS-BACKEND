@@ -7,6 +7,19 @@ import { logAudit } from "../utils/auditLogger";
 import { getAreaFilter } from "../utils/areaFilter";
 
 /**
+ * Standardizes a string to Title Case
+ */
+const normalizeArea = (str: string | undefined | null): string => {
+  if (!str) return "";
+  return str
+    .trim()
+    .toLowerCase()
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+};
+
+/**
  * Standardizes area names in the request body based on the Area collection
  */
 const standardizeAreaNames = async (body: any) => {
@@ -35,6 +48,9 @@ const standardizeAreaNames = async (body: any) => {
       
       if (areaRecord) {
         body[type] = areaRecord.name;
+      } else {
+        // Fallback to manual normalization if no area record found
+        body[type] = normalizeArea(value);
       }
     }
   }
@@ -47,124 +63,144 @@ const escapeRegex = (string: string) => {
 import { Redemption } from "../models/redemption.model";
 import { NES } from "../models/nes.model";
 
+const buildBeneficiaryQuery = async (req: Request) => {
+  const user = (req as any).user;
+  const { 
+    barangay, 
+    municipality, 
+    province, 
+    region, 
+    status, 
+    search, 
+    redemption_status,
+    frm_period,
+    is4ps
+  } = req.query;
+
+  const query: any = {};
+  const filters: any[] = [];
+
+  // Filter by is4ps
+  if (is4ps && is4ps !== "all") {
+    query.is4ps = { $regex: new RegExp(`^${is4ps}$`, "i") };
+  }
+
+  // Filter by user's assigned areas if not admin
+  if (user.role !== "admin" && user.assigned_areas && user.assigned_areas.length > 0) {
+    const areaFilter = await getAreaFilter(user.assigned_areas);
+    if (areaFilter) {
+      filters.push(areaFilter);
+    }
+  }
+
+  // Filter by redemption status if provided
+  if (redemption_status && redemption_status !== "all" && frm_period) {
+    let attendanceMatch: any;
+    
+    if (redemption_status === "present" || redemption_status === "redeemed") {
+      attendanceMatch = { $in: ["present", "redeemed", "Present", "Redeemed"] };
+    } else if (redemption_status === "absent" || redemption_status === "unredeemed") {
+      attendanceMatch = { $in: ["absent", "unredeemed", "Absent", "Unredeemed"] };
+    } else {
+      attendanceMatch = redemption_status;
+    }
+
+    const escapedPeriod = escapeRegex((frm_period as string).trim());
+    const periodMatch = { $regex: new RegExp(`^\\s*${escapedPeriod}\\s*$`, "i") };
+    const redemptionQuery: any = { frm_period: periodMatch };
+    
+    if (redemption_status !== "none") {
+      redemptionQuery.attendance = attendanceMatch;
+    }
+
+    const [redemptions, nesRecords] = await Promise.all([
+      Redemption.find(redemptionQuery).select("beneficiary_id hhid").lean(),
+      NES.find(redemptionQuery).select("beneficiary_id hhid").lean()
+    ]);
+
+    const matchedBenIds = new Set<string>();
+    const matchedHhids = new Set<string>();
+
+    [...redemptions, ...nesRecords].forEach(r => {
+      if (r.beneficiary_id) matchedBenIds.add(r.beneficiary_id.toString());
+      if (r.hhid && r.hhid !== "0" && r.hhid !== "") matchedHhids.add(r.hhid);
+    });
+
+    if (redemption_status === "none") {
+      const benIdObjs = Array.from(matchedBenIds).filter(id => id.length === 24).map(id => new (require('mongoose').Types.ObjectId)(id));
+      filters.push({
+        $and: [
+          { _id: { $nin: benIdObjs } },
+          { hhid: { $nin: Array.from(matchedHhids).filter(h => !!h) } }
+        ]
+      });
+    } else {
+      const benIdObjs = Array.from(matchedBenIds).filter(id => id.length === 24).map(id => new (require('mongoose').Types.ObjectId)(id));
+      filters.push({
+        $or: [
+          { _id: { $in: benIdObjs } },
+          { hhid: { $in: Array.from(matchedHhids).filter(h => !!h) } }
+        ]
+      });
+    }
+  }
+
+  // Add other filters
+  if (barangay && barangay !== "all") {
+    const escapedValue = (barangay as string).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    query.barangay = { $regex: new RegExp(`^${escapedValue}$`, "i") };
+  }
+  if (municipality && municipality !== "all") {
+    const val = (municipality as string).trim();
+    const escapedValue = val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?(\s*\(.+?\))?$/i);
+    const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?(\s*\(.+?\))?$/i);
+    const core = (cityMatch?.[2] || muniMatch?.[2] || val).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)(\\s*\\(.+?\\))?$`;
+    query.municipality = { $regex: new RegExp(pattern, "i") };
+  }
+  if (province && province !== "all") {
+    const escapedValue = (province as string).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    query.province = { $regex: new RegExp(`^${escapedValue}$`, "i") };
+  }
+  if (region && region !== "all") {
+    const escapedValue = (region as string).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    query.region = { $regex: new RegExp(`^${escapedValue}$`, "i") };
+  }
+  if (status && status !== "all") {
+    query.status = status;
+  }
+
+  if (search) {
+    const searchRegex = { $regex: search as string, $options: "i" };
+    filters.push({
+      $or: [
+        { hhid: searchRegex },
+        { first_name: searchRegex },
+        { last_name: searchRegex },
+        { pkno: searchRegex },
+      ]
+    });
+  }
+
+  if (filters.length > 0) {
+    query.$and = filters;
+  }
+
+  return query;
+};
+
 export const getBeneficiaries = catchAsync(
   async (req: Request, res: Response) => {
-    const user = (req as any).user;
     const { 
-      barangay, 
-      municipality, 
-      province, 
-      region, 
-      status, 
-      search, 
       page = 1, 
       limit = 10, 
       sort = "createdAt", 
       order = "desc",
-      redemption_status,
       frm_period
     } = req.query;
 
-    const query: any = {};
-    const filters: any[] = [];
-
-    // Filter by user's assigned areas if not admin
-    if (user.role !== "admin" && user.assigned_areas && user.assigned_areas.length > 0) {
-      const areaFilter = await getAreaFilter(user.assigned_areas);
-      if (areaFilter) {
-        filters.push(areaFilter);
-      }
-    }
-
-    // Filter by redemption status if provided
-    if (redemption_status && redemption_status !== "all" && frm_period) {
-      const attendanceMatch: any = redemption_status === "present" 
-        ? { $in: ["present", "redeemed", "Present", "Redeemed"] } 
-        : redemption_status === "absent" 
-          ? { $in: ["absent", "unredeemed", "Absent", "Unredeemed"] } 
-          : redemption_status;
-
-      const escapedPeriod = escapeRegex((frm_period as string).trim());
-      const periodMatch = { $regex: new RegExp(`^\\s*${escapedPeriod}\\s*$`, "i") };
-      const redemptionQuery: any = { frm_period: periodMatch };
-      
-      if (redemption_status !== "none") {
-        redemptionQuery.attendance = attendanceMatch;
-      }
-
-      const [redemptions, nesRecords] = await Promise.all([
-        Redemption.find(redemptionQuery).select("beneficiary_id hhid").lean(),
-        NES.find(redemptionQuery).select("beneficiary_id hhid").lean()
-      ]);
-
-      const matchedBenIds = new Set<string>();
-      const matchedHhids = new Set<string>();
-
-      [...redemptions, ...nesRecords].forEach(r => {
-        if (r.beneficiary_id) matchedBenIds.add(r.beneficiary_id.toString());
-        if (r.hhid && r.hhid !== "0" && r.hhid !== "") matchedHhids.add(r.hhid);
-      });
-
-      if (redemption_status === "none") {
-        const benIdObjs = Array.from(matchedBenIds).filter(id => id.length === 24).map(id => new (require('mongoose').Types.ObjectId)(id));
-        filters.push({
-          $and: [
-            { _id: { $nin: benIdObjs } },
-            { hhid: { $nin: Array.from(matchedHhids).filter(h => !!h) } }
-          ]
-        });
-      } else {
-        const benIdObjs = Array.from(matchedBenIds).filter(id => id.length === 24).map(id => new (require('mongoose').Types.ObjectId)(id));
-        filters.push({
-          $or: [
-            { _id: { $in: benIdObjs } },
-            { hhid: { $in: Array.from(matchedHhids).filter(h => !!h) } }
-          ]
-        });
-      }
-    }
-
-    // Add other filters
-    if (barangay && barangay !== "all") {
-      const escapedValue = (barangay as string).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      query.barangay = { $regex: new RegExp(`^${escapedValue}$`, "i") };
-    }
-    if (municipality && municipality !== "all") {
-      const val = (municipality as string).trim();
-      const escapedValue = val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?(\s*\(.+?\))?$/i);
-      const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?(\s*\(.+?\))?$/i);
-      const core = (cityMatch?.[2] || muniMatch?.[2] || val).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const pattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)(\\s*\\(.+?\\))?$`;
-      query.municipality = { $regex: new RegExp(pattern, "i") };
-    }
-    if (province && province !== "all") {
-      const escapedValue = (province as string).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      query.province = { $regex: new RegExp(`^${escapedValue}$`, "i") };
-    }
-    if (region && region !== "all") {
-      const escapedValue = (region as string).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      query.region = { $regex: new RegExp(`^${escapedValue}$`, "i") };
-    }
-    if (status && status !== "all") {
-      query.status = status;
-    }
-
-    if (search) {
-      const searchRegex = { $regex: search as string, $options: "i" };
-      filters.push({
-        $or: [
-          { hhid: searchRegex },
-          { first_name: searchRegex },
-          { last_name: searchRegex },
-          { pkno: searchRegex },
-        ]
-      });
-    }
-
-    if (filters.length > 0) {
-      query.$and = filters;
-    }
+    const query = await buildBeneficiaryQuery(req);
 
     // Determine sort object
     let sortField = sort as string;
@@ -408,8 +444,16 @@ export const getBeneficiaries = catchAsync(
       const hhidMatch = (hhid && hhid !== "0" && hhid !== "") ? periodRedemptionMap.get(hhid) : null;
       const current_redemption = periodRedemptionMap.get(id) || hhidMatch;
 
+      const benObj = b.toObject();
+      
+      // Normalize area names in the response
+      benObj.region = normalizeArea(benObj.region);
+      benObj.province = normalizeArea(benObj.province);
+      benObj.municipality = normalizeArea(benObj.municipality);
+      benObj.barangay = normalizeArea(benObj.barangay);
+
       return {
-        ...b.toObject(),
+        ...benObj,
         redemption_stats: redemptionMap.get(id) || { redeemed: 0, unredeemed: 0 },
         nes_stats: nesMap.get(id) || { present: 0, absent: 0 },
         current_redemption: current_redemption || null
@@ -421,6 +465,320 @@ export const getBeneficiaries = catchAsync(
       total,
       page: pageNum,
       totalPages: limit === "all" ? 1 : Math.ceil(total / limitNum)
+    });
+  }
+);
+
+export const getExportData = catchAsync(
+  async (req: Request, res: Response) => {
+    const { 
+      sort = "last_name", 
+      order = "asc",
+      frm_period
+    } = req.query;
+
+    const query = await buildBeneficiaryQuery(req);
+
+    // Determine sort object
+    let sortField = sort as string;
+    const sortOrder = order === "asc" ? 1 : -1;
+    const sortObj: any = {};
+    sortObj[sortField] = sortOrder;
+    sortObj["_id"] = -1;
+
+    // Fetch all beneficiaries matching the query
+    const beneficiaries = await Beneficiary.find(query).sort(sortObj);
+    
+    if (beneficiaries.length === 0) {
+      return res.status(200).json({ data: [] });
+    }
+
+    const beneficiaryIds = beneficiaries.map(b => b._id.toString());
+    const hhids = beneficiaries.map(b => b.hhid).filter(h => !!h && h !== "0" && h !== "");
+    const beneficiaryIdObjs = beneficiaryIds.map(id => {
+      try {
+        return new (require('mongoose').Types.ObjectId)(id);
+      } catch (e) {
+        return null;
+      }
+    }).filter(id => id !== null);
+
+    // Fetch current period records
+    let periodRedemptions: any[] = [];
+    let periodNesRecords: any[] = [];
+    if (frm_period) {
+      const escapedPeriod = escapeRegex((frm_period as string).trim());
+      const periodMatch = { $regex: new RegExp(`^\\s*${escapedPeriod}\\s*$`, "i") };
+      const [reds, nes] = await Promise.all([
+        Redemption.find({
+          frm_period: periodMatch,
+          $or: [
+            { beneficiary_id: { $in: beneficiaryIds } },
+            { beneficiary_id: { $in: beneficiaryIdObjs } },
+            { hhid: { $in: hhids } }
+          ]
+        }).lean(),
+        NES.find({
+          frm_period: periodMatch,
+          $or: [
+            { beneficiary_id: { $in: beneficiaryIds } },
+            { beneficiary_id: { $in: beneficiaryIdObjs } },
+            { hhid: { $in: hhids } }
+          ]
+        }).lean()
+      ]);
+      periodRedemptions = reds;
+      periodNesRecords = nes;
+    }
+
+    // Aggregate stats for ALL time (for percentages)
+    const [redemptionStats, nesStats] = await Promise.all([
+      Redemption.aggregate([
+        { 
+          $match: { 
+            $or: [
+              { beneficiary_id: { $in: beneficiaryIds } },
+              { beneficiary_id: { $in: beneficiaryIdObjs } },
+              { hhid: { $in: hhids } }
+            ]
+          } 
+        },
+        {
+          $lookup: {
+            from: "beneficiaries",
+            let: { b_id: "$beneficiary_id", h_id: "$hhid" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $or: [
+                      { $eq: ["$_id", "$$b_id"] },
+                      { $eq: [{ $toString: "$_id" }, { $toString: "$$b_id" }] },
+                      { 
+                        $and: [
+                          { $ne: ["$$h_id", ""] },
+                          { $ne: ["$$h_id", null] },
+                          { $ne: ["$$h_id", "0"] },
+                          { $eq: ["$hhid", "$$h_id"] }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+               { $project: { _id: 1 } },
+               { $limit: 1 }
+            ],
+            as: "matched_ben"
+          }
+        },
+        { $unwind: "$matched_ben" },
+        {
+          $group: {
+            _id: { $toString: "$matched_ben._id" },
+            redeemed: {
+              $sum: { 
+                $cond: [
+                  { $or: [
+                    { $eq: ["$attendance", "present"] },
+                    { $eq: ["$attendance", "redeemed"] }
+                  ]}, 
+                  1, 
+                  0
+                ] 
+              }
+            },
+            unredeemed: {
+              $sum: { 
+                $cond: [
+                  { $or: [
+                    { $eq: ["$attendance", "absent"] },
+                    { $eq: ["$attendance", "unredeemed"] }
+                  ]}, 
+                  1, 
+                  0
+                ] 
+              }
+            }
+          }
+        }
+      ]),
+      NES.aggregate([
+        { 
+          $match: { 
+            $or: [
+              { beneficiary_id: { $in: beneficiaryIds } },
+              { beneficiary_id: { $in: beneficiaryIdObjs } },
+              { hhid: { $in: hhids } }
+            ]
+          } 
+        },
+        {
+          $lookup: {
+            from: "beneficiaries",
+            let: { b_id: "$beneficiary_id", h_id: "$hhid" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $or: [
+                      { $eq: ["$_id", "$$b_id"] },
+                      { $eq: [{ $toString: "$_id" }, { $toString: "$$b_id" }] },
+                      { 
+                        $and: [
+                          { $ne: ["$$h_id", ""] },
+                          { $ne: ["$$h_id", null] },
+                          { $ne: ["$$h_id", "0"] },
+                          { $eq: ["$hhid", "$$h_id"] }
+                        ]
+                      }
+                    ]
+                  }
+                }
+              },
+               { $project: { _id: 1 } },
+               { $limit: 1 }
+            ],
+            as: "matched_ben"
+          }
+        },
+        { $unwind: "$matched_ben" },
+        {
+          $group: {
+            _id: { $toString: "$matched_ben._id" },
+            present: {
+              $sum: { 
+                $cond: [
+                  { $or: [
+                    { $eq: ["$attendance", "present"] },
+                    { $eq: ["$attendance", "redeemed"] }
+                  ]}, 
+                  1, 
+                  0
+                ] 
+              }
+            },
+            absent: {
+              $sum: { 
+                $cond: [
+                  { $or: [
+                    { $eq: ["$attendance", "absent"] },
+                    { $eq: ["$attendance", "unredeemed"] }
+                  ]}, 
+                  1, 
+                  0
+                ] 
+              }
+            }
+          }
+        }
+      ])
+    ]);
+
+    const redemptionMap = new Map(redemptionStats.map(s => [s._id, s]));
+    const nesMap = new Map(nesStats.map(s => [s._id, s]));
+
+    const periodRedemptionMap = new Map();
+    periodRedemptions.forEach(r => {
+      if (r.beneficiary_id) periodRedemptionMap.set(r.beneficiary_id.toString(), r);
+      if (r.hhid && r.hhid !== "0" && r.hhid !== "") periodRedemptionMap.set(r.hhid, r);
+    });
+
+    const periodNesMap = new Map();
+    periodNesRecords.forEach(r => {
+      if (r.beneficiary_id) periodNesMap.set(r.beneficiary_id.toString(), r);
+      if (r.hhid && r.hhid !== "0" && r.hhid !== "") periodNesMap.set(r.hhid, r);
+    });
+
+    const exportData = beneficiaries.map(b => {
+      const id = b._id.toString();
+      const hhid = b.hhid;
+      
+      const redStat = redemptionMap.get(id) || { redeemed: 0, unredeemed: 0 };
+      const nesStat = nesMap.get(id) || { present: 0, absent: 0 };
+      
+      const redTotal = redStat.redeemed + redStat.unredeemed;
+      const nesTotal = nesStat.present + nesStat.absent;
+      
+      const redemptionRate = redTotal > 0 ? (redStat.redeemed / redTotal) * 100 : 0;
+      const nesRate = nesTotal > 0 ? (nesStat.present / nesTotal) * 100 : 0;
+
+      const hhidMatchRed = (hhid && hhid !== "0" && hhid !== "") ? periodRedemptionMap.get(hhid) : null;
+      const currentRed = periodRedemptionMap.get(id) || hhidMatchRed;
+
+      const hhidMatchNes = (hhid && hhid !== "0" && hhid !== "") ? periodNesMap.get(hhid) : null;
+      const currentNes = periodNesMap.get(id) || hhidMatchNes;
+
+      return {
+        "HHID": b.hhid,
+        "Last Name": b.last_name,
+        "First Name": b.first_name,
+        "Middle Name": b.middle_name || "",
+        "Region": normalizeArea(b.region),
+        "Province": normalizeArea(b.province),
+        "Municipality": normalizeArea(b.municipality),
+        "Barangay": normalizeArea(b.barangay),
+        "Status": b.status,
+        "FRM Period": frm_period || "N/A",
+        "Redemption Status": currentRed?.attendance || "none",
+        "Redemption Rate (%)": redemptionRate.toFixed(2),
+        "NES Attendance": currentNes?.attendance || "none",
+        "NES Rate (%)": nesRate.toFixed(2),
+        "Remarks": currentRed?.action || currentNes?.action || "",
+        "Reason": currentRed?.reason || currentNes?.reason || "",
+        "Date Recorded": currentRed?.date_recorded || currentNes?.date_recorded || ""
+      };
+    });
+
+    res.status(200).json({ data: exportData });
+  }
+);
+
+export const normalizeAllAreaNames = catchAsync(
+  async (req: Request, res: Response) => {
+    const beneficiaries = await Beneficiary.find({});
+    let bUpdates = 0;
+    
+    for (const b of beneficiaries) {
+      let changed = false;
+      const fields = ['region', 'province', 'municipality', 'barangay'] as const;
+      
+      for (const field of fields) {
+        if (b[field]) {
+          const normalized = normalizeArea(b[field]);
+          if (normalized !== b[field]) {
+            (b as any)[field] = normalized;
+            changed = true;
+          }
+        }
+      }
+
+      if (changed) {
+        await b.save();
+        bUpdates++;
+      }
+    }
+
+    // Also normalize the Area collection
+    const areas = await Area.find({});
+    let aUpdates = 0;
+    for (const a of areas) {
+      if (a.name) {
+        const normalized = normalizeArea(a.name);
+        if (normalized !== a.name) {
+          a.name = normalized;
+          await a.save();
+          aUpdates++;
+        }
+      }
+    }
+
+    await logAudit(req, "MAINTENANCE", "system", "all", "", `Normalized area names: ${bUpdates} beneficiaries, ${aUpdates} areas`);
+
+    res.status(200).json({
+      message: "Normalization complete",
+      beneficiaries_updated: bUpdates,
+      areas_updated: aUpdates
     });
   }
 );
@@ -927,11 +1285,27 @@ export const getAvailableFilters = catchAsync(
     const municipalities = await Beneficiary.distinct("municipality", query);
     const barangays = await Beneficiary.distinct("barangay", query);
 
+    // Get available FRM periods
+    const [redemptionPeriods, nesPeriods] = await Promise.all([
+      Redemption.distinct("frm_period"),
+      NES.distinct("frm_period")
+    ]);
+    const periods = [...new Set([...redemptionPeriods, ...nesPeriods])]
+      .filter(Boolean)
+      .sort((a, b) => b.localeCompare(a)); // Sort descending (newest first)
+
+    // Normalize and remove duplicates
+    const normalizeList = (list: string[]) => {
+      const normalized = list.map(item => normalizeArea(item)).filter(Boolean);
+      return [...new Set(normalized)].sort();
+    };
+
     res.status(200).json({
-      regions: regions.filter(Boolean).sort(),
-      provinces: provinces.filter(Boolean).sort(),
-      municipalities: municipalities.filter(Boolean).sort(),
-      barangays: barangays.filter(Boolean).sort(),
+      regions: normalizeList(regions),
+      provinces: normalizeList(provinces),
+      municipalities: normalizeList(municipalities),
+      barangays: normalizeList(barangays),
+      periods: periods
     });
   }
 );

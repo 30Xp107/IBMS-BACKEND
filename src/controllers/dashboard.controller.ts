@@ -37,6 +37,16 @@ const escapeRegex = (string: string) => {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 };
 
+const normalizeArea = (str: string | undefined | null): string => {
+  if (!str) return "Unknown";
+  return str
+    .trim()
+    .toLowerCase()
+    .split(' ')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+};
+
 export const getDashboardStats = catchAsync(
   async (req: Request, res: Response) => {
     const user = (req as any).user;
@@ -390,14 +400,16 @@ export const getRedemptionDashboardStats = catchAsync(
       else attendanceCounts.none++;
 
       // Municipality breakdown
-      const mKey = `${ben.province || "Unknown"}|${ben.municipality || "Unknown"}`;
+      const province = normalizeArea(ben?.province);
+      const municipality = normalizeArea(ben?.municipality);
+      const mKey = `${province}|${municipality}`;
       if (!muniStats.has(mKey)) muniStats.set(mKey, { redeemed: 0, unredeemed: 0 });
       const mS = muniStats.get(mKey)!;
       if (isPresent) mS.redeemed++;
       if (isAbsent) mS.unredeemed++;
 
       // Province breakdown
-      const pKey = ben.province || "Unknown";
+      const pKey = province;
       if (!provStats.has(pKey)) provStats.set(pKey, { redeemed: 0, unredeemed: 0 });
       const pS = provStats.get(pKey)!;
       if (isPresent) pS.redeemed++;
@@ -466,7 +478,9 @@ export const getRedemptionDashboardStats = catchAsync(
     // Municipality breakdown (Targets from in-memory beneficiaries)
     const muniTargets = new Map<string, number>();
     beneficiaries.forEach(b => {
-      const key = `${b.province || "Unknown"}|${b.municipality || "Unknown"}`;
+      const province = normalizeArea(b.province);
+      const municipality = normalizeArea(b.municipality);
+      const key = `${province}|${municipality}`;
       muniTargets.set(key, (muniTargets.get(key) || 0) + 1);
     });
 
@@ -487,7 +501,7 @@ export const getRedemptionDashboardStats = catchAsync(
     // Province breakdown
     const provTargets = new Map<string, number>();
     beneficiaries.forEach(b => {
-      const key = b.province || "Unknown";
+      const key = normalizeArea(b.province);
       provTargets.set(key, (provTargets.get(key) || 0) + 1);
     });
 
@@ -642,14 +656,16 @@ export const getNESDashboardStats = catchAsync(
       else attendanceCounts.none++;
 
       // Municipality breakdown
-      const mKey = `${ben.province || "Unknown"}|${ben.municipality || "Unknown"}`;
+      const province = normalizeArea(ben?.province);
+      const municipality = normalizeArea(ben?.municipality);
+      const mKey = `${province}|${municipality}`;
       if (!muniStats.has(mKey)) muniStats.set(mKey, { attended: 0, unattended: 0 });
       const mS = muniStats.get(mKey)!;
       if (isPresent) mS.attended++;
       if (isAbsent) mS.unattended++;
 
       // Province breakdown
-      const pKey = ben.province || "Unknown";
+      const pKey = province;
       if (!provStats.has(pKey)) provStats.set(pKey, { attended: 0, unattended: 0 });
       const pS = provStats.get(pKey)!;
       if (isPresent) pS.attended++;
@@ -718,7 +734,9 @@ export const getNESDashboardStats = catchAsync(
     // Municipality breakdown (Targets from in-memory beneficiaries)
     const muniTargets = new Map<string, number>();
     beneficiaries.forEach(b => {
-      const key = `${b.province || "Unknown"}|${b.municipality || "Unknown"}`;
+      const province = normalizeArea(b.province);
+      const municipality = normalizeArea(b.municipality);
+      const key = `${province}|${municipality}`;
       muniTargets.set(key, (muniTargets.get(key) || 0) + 1);
     });
 
@@ -739,7 +757,7 @@ export const getNESDashboardStats = catchAsync(
     // Province breakdown
     const provTargets = new Map<string, number>();
     beneficiaries.forEach(b => {
-      const key = b.province || "Unknown";
+      const key = normalizeArea(b.province);
       provTargets.set(key, (provTargets.get(key) || 0) + 1);
     });
 

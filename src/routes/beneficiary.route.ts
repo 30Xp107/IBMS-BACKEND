@@ -5,6 +5,8 @@ import {
   checkDuplicates,
   deleteBeneficiary,
   getBeneficiaries,
+  getExportData,
+  normalizeAllAreaNames,
   updateBeneficiary,
   bulkDeleteBeneficiaries,
   getAvailableFilters,
@@ -14,6 +16,8 @@ import { isAuthenticated, authorizeRoles } from "../middleware/auth";
 const router = express.Router();
 
 router.get("/", isAuthenticated, getBeneficiaries);
+router.get("/export", isAuthenticated, getExportData);
+router.post("/maintenance/normalize-areas", isAuthenticated, authorizeRoles("admin"), normalizeAllAreaNames);
 router.get("/filters", isAuthenticated, getAvailableFilters);
 router.post("/", isAuthenticated, authorizeRoles("admin"), createBeneficiary);
 router.post("/bulk", isAuthenticated, authorizeRoles("admin"), bulkCreateBeneficiaries);
