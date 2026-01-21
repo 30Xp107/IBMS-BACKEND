@@ -5,19 +5,7 @@ import ErrorHandler from "../utils/ErrorHandler";
 import { catchAsync } from "../utils/catchAsync";
 import { logAudit } from "../utils/auditLogger";
 import { getAreaFilter } from "../utils/areaFilter";
-
-/**
- * Standardizes a string to Title Case
- */
-const normalizeArea = (str: string | undefined | null): string => {
-  if (!str) return "";
-  return str
-    .trim()
-    .toLowerCase()
-    .split(' ')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
-};
+import { normalizeArea } from "../utils/normalization";
 
 /**
  * Standardizes area names in the request body based on the Area collection

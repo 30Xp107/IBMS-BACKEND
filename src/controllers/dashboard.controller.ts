@@ -7,6 +7,7 @@ import { SystemConfig } from "../models/systemConfig.model";
 import { catchAsync } from "../utils/catchAsync";
 import { getAreaFilter } from "../utils/areaFilter";
 import { getFrmPeriod } from "../utils/frmHelpers";
+import { normalizeArea } from "../utils/normalization";
 
 /**
  * Helper to prefix all keys in a query object for aggregation matches after a lookup.
@@ -35,17 +36,6 @@ const prefixQueryKeys = (query: any, prefix: string): any => {
 
 const escapeRegex = (string: string) => {
   return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-};
-
-const normalizeArea = (str: string | undefined | null): string => {
-  if (!str) return "Unknown";
-  return str
-    .trim()
-    .replace(/\s+/g, " ") // Replace multiple whitespaces with a single space
-    .toLowerCase()
-    .split(" ")
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(" ");
 };
 
 export const getDashboardStats = catchAsync(

@@ -3,7 +3,8 @@ import dotenv from "dotenv";
 import fs from "fs";
 import path from "path";
 import { Area } from "../models/area.model";
-import connectDB from "../utils/db";
+import connectDB from "../utils/database";
+import { normalizeArea } from "../utils/normalization";
 
 dotenv.config();
 
@@ -58,7 +59,7 @@ const importPSGC = async () => {
       if (parts.length <= Math.max(codeIdx, nameIdx, levelIdx)) continue;
 
       const code = parts[codeIdx].trim().replace(/"/g, '');
-      const name = parts[nameIdx].trim().replace(/"/g, '');
+      const name = normalizeArea(parts[nameIdx].trim().replace(/"/g, ''));
       const levelStr = parts[levelIdx].trim().replace(/"/g, '').toLowerCase();
 
       let type: "region" | "province" | "municipality" | "barangay";

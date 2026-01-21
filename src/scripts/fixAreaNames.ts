@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import path from 'path';
+import { normalizeArea } from '../utils/normalization';
 
 // Load env from the root or server directory
 dotenv.config({ path: path.resolve(__dirname, '../../.env') });
@@ -11,16 +12,6 @@ if (!MONGODB_URI) {
   console.error('MONGODB_URI not found in .env');
   process.exit(1);
 }
-
-const normalizeArea = (str: string | undefined | null): string => {
-  if (!str) return "";
-  return str
-    .trim()
-    .toLowerCase()
-    .split(' ')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
-};
 
 async function fixData() {
   try {
