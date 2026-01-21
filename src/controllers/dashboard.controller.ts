@@ -61,101 +61,117 @@ export const getDashboardStats = catchAsync(
 
     // Fetch beneficiary IDs and HHIDs once for all subsequent queries
     const beneficiaries = await Beneficiary.find(beneficiaryQuery).select("_id hhid").lean();
+    const totalBeneficiaries = beneficiaries.length;
+    
+    if (totalBeneficiaries === 0) {
+      return res.status(200).json({
+        total_beneficiaries: 0,
+        total_redemptions: 0,
+        total_nes: 0,
+        current_month: await getFrmPeriod(),
+        month_redemptions: 0,
+        month_nes: 0,
+        redemption_attendance_rate: 0,
+        nes_attendance_rate: 0,
+        monthly_trends: []
+      });
+    }
+
     const beneficiaryIdList = beneficiaries.map(b => b._id.toString());
-    const hhidList = beneficiaries.map(b => b.hhid).filter(h => !!h);
+    const beneficiaryIdObjs = beneficiaries.map(b => b._id);
+    const hhidList = beneficiaries.map(b => b.hhid).filter(h => !!h && h !== "0" && h !== "");
 
-    // Filter aggregation helper for redemptions/NES
-    const getFilteredCount = async (model: any, additionalQuery: any = {}) => {
-      if (beneficiaryIdList.length === 0) return 0;
+    const initialMatch = {
+      $or: [
+        { beneficiary_id: { $in: beneficiaryIdList } },
+        { beneficiary_id: { $in: beneficiaryIdObjs } },
+        { hhid: { $in: hhidList } }
+      ]
+    };
 
-      // Convert string IDs to ObjectIds for matching if needed
-      const beneficiaryIdObjs = beneficiaryIdList.map(id => {
-        try {
-          return new (require('mongoose').Types.ObjectId)(id);
-        } catch (e) {
-          return null;
-        }
-      }).filter(id => id !== null);
-
-      const aggregation = [
+    // Helper to get total unique count (ben_id + period)
+    const getOverallStats = async (model: any) => {
+      const result = await model.aggregate([
+        { $match: initialMatch },
         {
-          $match: {
-            ...additionalQuery,
-            $or: [
-              { beneficiary_id: { $in: beneficiaryIdList } },
-              { beneficiary_id: { $in: beneficiaryIdObjs } },
-              { hhid: { $in: hhidList } }
-            ]
-          }
-        },
-        // Normalize beneficiary_id for grouping
-        {
-          $addFields: {
-            norm_beneficiary_id: {
-              $cond: {
-                if: { $eq: [{ $type: "$beneficiary_id" }, "objectId"] },
-                then: "$beneficiary_id",
-                else: {
-                  $cond: {
-                    if: { $and: [
-                      { $ne: ["$beneficiary_id", ""] },
-                      { $ne: ["$beneficiary_id", null] },
-                      { $eq: [{ $type: "$beneficiary_id" }, "string"] },
-                      { $eq: [{ $strLenCP: "$beneficiary_id" }, 24] }
-                    ]},
-                    then: { $toObjectId: "$beneficiary_id" },
-                    else: "$beneficiary_id"
-                  }
-                }
-              }
+          $group: {
+            _id: { 
+              ben_id: { $ifNull: ["$beneficiary_id", "$hhid"] }, 
+              period: "$frm_period" 
             }
           }
         },
-        // Unique per beneficiary and period
-        {
-          $group: {
-            _id: { beneficiary_id: "$norm_beneficiary_id", period: "$frm_period" }
-          }
-        },
         { $count: "total" }
-      ];
-      const result = await model.aggregate(aggregation);
+      ]);
       return result[0]?.total || 0;
     };
 
     const [
-      totalBeneficiaries,
       totalRedemptions,
       totalNES,
       currentPeriod
     ] = await Promise.all([
-      Beneficiary.countDocuments(beneficiaryQuery),
-      getFilteredCount(Redemption),
-      getFilteredCount(NES),
+      getOverallStats(Redemption),
+      getOverallStats(NES),
       getFrmPeriod()
     ]);
 
     // Get current FRM period stats
     const escapedCurrentPeriod = escapeRegex(currentPeriod.trim());
-    const currentPeriodMatch = { $regex: new RegExp(`^\\s*${escapedCurrentPeriod}\\s*$`, "i") };
+    const currentPeriodMatch = { 
+      frm_period: { $regex: new RegExp(`^\\s*${escapedCurrentPeriod}\\s*$`, "i") } 
+    };
 
     const [
-      monthRedemptions,
-      monthNES,
-      presentRedemptions,
-      presentNES
+      monthRedemptionStats,
+      monthNESStats
     ] = await Promise.all([
-      getFilteredCount(Redemption, { frm_period: currentPeriodMatch }),
-      getFilteredCount(NES, { frm_period: currentPeriodMatch }),
-      getFilteredCount(Redemption, {
-        frm_period: currentPeriodMatch,
-        attendance: { $in: ["present", "redeemed"] },
-      }),
-      getFilteredCount(NES, {
-        frm_period: currentPeriodMatch,
-        attendance: { $in: ["present", "redeemed"] },
-      })
+      Redemption.aggregate([
+        { $match: { ...initialMatch, ...currentPeriodMatch } },
+        {
+          $group: {
+            _id: { $ifNull: ["$beneficiary_id", "$hhid"] },
+            attendance: { $first: "$attendance" }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            present: {
+              $sum: {
+                $cond: [{ $in: [{ $toLower: "$attendance" }, ["present", "redeemed"]] }, 1, 0]
+              }
+            }
+          }
+        }
+      ]),
+      NES.aggregate([
+        { $match: { ...initialMatch, ...currentPeriodMatch } },
+        {
+          $group: {
+            _id: { $ifNull: ["$beneficiary_id", "$hhid"] },
+            attendance: { $first: "$attendance" }
+          }
+        },
+        {
+          $group: {
+            _id: null,
+            total: { $sum: 1 },
+            present: {
+              $sum: {
+                $cond: [{ $in: [{ $toLower: "$attendance" }, ["present", "redeemed"]] }, 1, 0]
+              }
+            }
+          }
+        }
+      ])
     ]);
+
+    const monthRedemptions = monthRedemptionStats[0]?.total || 0;
+    const presentRedemptions = monthRedemptionStats[0]?.present || 0;
+    const monthNES = monthNESStats[0]?.total || 0;
+    const presentNES = monthNESStats[0]?.present || 0;
 
     const stats: any = {
       total_beneficiaries: totalBeneficiaries,
@@ -175,13 +191,13 @@ export const getDashboardStats = catchAsync(
 
     // Get the unique FRM periods from the database for trends
     const [redemptionPeriods, nesPeriods] = await Promise.all([
-      Redemption.distinct("frm_period"),
-      NES.distinct("frm_period")
+      Redemption.distinct("frm_period", initialMatch),
+      NES.distinct("frm_period", initialMatch)
     ]);
 
     const allPeriodsSet = new Set<string>([...redemptionPeriods, ...nesPeriods]);
     
-    // Add custom schedules to the set if not already present
+    // Add custom schedules to the set
     try {
       const config = await SystemConfig.findOne({ key: "frm_schedules" });
       if (config && Array.isArray(config.value)) {
@@ -191,27 +207,50 @@ export const getDashboardStats = catchAsync(
       console.error("Error fetching FRM schedules for dashboard trends:", error);
     }
 
-    // Convert set to array and filter out empty values
     const allPeriods = Array.from(allPeriodsSet).filter(p => !!p);
+    const sortedPeriods = allPeriods.sort((a, b) => b.localeCompare(a)).slice(0, 12);
 
-    // Sort periods - this is tricky without a date. 
-    // For now, we'll try to sort them. Monthly ones usually sort okay.
-    // Custom ones like "FRM 1" might need special handling.
-    // For a better experience, we'll sort them and take the last 12.
-    const sortedPeriods = allPeriods.sort((a, b) => b.localeCompare(a)).slice(0, 12).reverse();
+    // Get trend stats for all relevant periods in one go for each model
+    const [redemptionTrends, nesTrends] = await Promise.all([
+      Redemption.aggregate([
+        { $match: { ...initialMatch, frm_period: { $in: sortedPeriods } } },
+        {
+          $group: {
+            _id: { ben_id: { $ifNull: ["$beneficiary_id", "$hhid"] }, period: "$frm_period" }
+          }
+        },
+        {
+          $group: {
+            _id: "$_id.period",
+            count: { $sum: 1 }
+          }
+        }
+      ]),
+      NES.aggregate([
+        { $match: { ...initialMatch, frm_period: { $in: sortedPeriods } } },
+        {
+          $group: {
+            _id: { ben_id: { $ifNull: ["$beneficiary_id", "$hhid"] }, period: "$frm_period" }
+          }
+        },
+        {
+          $group: {
+            _id: "$_id.period",
+            count: { $sum: 1 }
+          }
+        }
+      ])
+    ]);
 
-    // Get stats for each period
-    for (const periodStr of sortedPeriods) {
-      const redemptions = await getFilteredCount(Redemption, { frm_period: periodStr });
-      const nes = await getFilteredCount(NES, { frm_period: periodStr });
-      
-      stats.monthly_trends.push({
-        month: periodStr,
-        fullName: periodStr,
-        redemptions,
-        nes
-      });
-    }
+    const redMap = new Map(redemptionTrends.map(t => [t._id, t.count]));
+    const nesMap = new Map(nesTrends.map(t => [t._id, t.count]));
+
+    stats.monthly_trends = sortedPeriods.map(periodStr => ({
+      month: periodStr,
+      fullName: periodStr,
+      redemptions: redMap.get(periodStr) || 0,
+      nes: nesMap.get(periodStr) || 0
+    })).reverse();
 
     if (user.role === "admin") {
       const pendingUsers = await userModel.countDocuments({ status: "pending" });
@@ -254,117 +293,132 @@ export const getRedemptionDashboardStats = catchAsync(
       beneficiaryQuery.municipality = { $regex: new RegExp(`^\\s*${escapeRegex(municipality.toString().trim())}\\s*$`, "i") };
     }
 
-    // Filter redemptions by area using a join with Beneficiary collection
-    const filteredRedemptionsAggregation = [
-      {
-        $addFields: {
-          beneficiary_id_obj: {
-            $cond: {
-              if: { $eq: [{ $type: "$beneficiary_id" }, "objectId"] },
-              then: "$beneficiary_id",
-              else: {
-                $cond: {
-                  if: { $and: [
-                    { $ne: ["$beneficiary_id", ""] },
-                    { $ne: ["$beneficiary_id", null] },
-                    { $eq: [{ $type: "$beneficiary_id" }, "string"] },
-                    { $eq: [{ $strLenCP: "$beneficiary_id" }, 24] }
-                  ]},
-                  then: { $toObjectId: "$beneficiary_id" },
-                  else: null
-                }
-              }
-            }
-          },
-          norm_beneficiary_id: { $toString: "$beneficiary_id" }
-        }
-      },
-      {
-        $lookup: {
-          from: "beneficiaries",
-          let: { b_id: "$beneficiary_id_obj", h_id: "$hhid", b_id_str: "$norm_beneficiary_id" },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $or: [
-                    { $eq: ["$_id", "$$b_id"] },
-                    { $eq: [{ $toString: "$_id" }, "$$b_id_str"] },
-                    { 
-                      $and: [
-                        { $ne: ["$$h_id", ""] },
-                        { $ne: ["$$h_id", null] },
-                        { $ne: ["$$h_id", "0"] },
-                        { $eq: ["$hhid", "$$h_id"] }
-                      ]
-                    }
-                  ]
-                }
-              }
-            },
-            { $limit: 1 }
-          ],
-          as: "beneficiary"
-        }
-      },
-      { $unwind: "$beneficiary" },
-      { $match: prefixQueryKeys(beneficiaryQuery, "beneficiary") }
-    ];
+    // 1. Fetch relevant beneficiaries once (This is the source of truth for the dashboard)
+    const beneficiaries = await Beneficiary.find(beneficiaryQuery).select("_id hhid province municipality").lean();
+    const totalBeneficiaries = beneficiaries.length;
+    
+    if (totalBeneficiaries === 0) {
+      return res.status(200).json({
+        totalRedemptions: 0,
+        attendanceStats: [],
+        periodStats: [],
+        municipalityBreakdown: [],
+        provinceBreakdown: []
+      });
+    }
 
+    const beneficiaryIdList = beneficiaries.map(b => b._id.toString());
+    const beneficiaryIdObjs = beneficiaries.map(b => b._id);
+    const hhidList = beneficiaries.map(b => b.hhid).filter(h => !!h && h !== "0" && h !== "");
+
+    // Create maps for quick lookup
+    const benMapById = new Map();
+    const benMapByHhid = new Map();
+    beneficiaries.forEach(b => {
+      benMapById.set(b._id.toString(), b);
+      if (b.hhid && b.hhid !== "0") {
+        benMapByHhid.set(b.hhid, b);
+      }
+    });
+
+    const initialMatch = {
+      $or: [
+        { beneficiary_id: { $in: beneficiaryIdList } },
+        { beneficiary_id: { $in: beneficiaryIdObjs } },
+        { hhid: { $in: hhidList } }
+      ]
+    };
+
+    // Helper to get normalized beneficiary ID from a redemption record
+    const getBenId = (r: any) => {
+      if (r.beneficiary_id) {
+        const idStr = r.beneficiary_id.toString();
+        if (benMapById.has(idStr)) return idStr;
+      }
+      if (r.hhid && r.hhid !== "0" && benMapByHhid.has(r.hhid)) {
+        return benMapByHhid.get(r.hhid)._id.toString();
+      }
+      return null;
+    };
+
+    // 2. Get Total Redemptions (ever, for these beneficiaries)
     const totalRedemptionsResult = await Redemption.aggregate([
-      ...filteredRedemptionsAggregation,
+      { $match: initialMatch },
       {
         $group: {
-          _id: { beneficiary_id: "$beneficiary._id", period: "$frm_period" }
+          _id: { 
+            ben_id: { $ifNull: ["$beneficiary_id", "$hhid"] }, 
+            period: "$frm_period" 
+          }
         }
       },
       { $count: "total" }
     ]);
     const totalRedemptions = totalRedemptionsResult[0]?.total || 0;
-    const totalBeneficiaries = await Beneficiary.countDocuments(beneficiaryQuery);
-    
-    // Escape regex special characters in the period name (like parentheses)
+
+    // 3. Get Stats for Target Period
     const escapedPeriod = escapeRegex(targetPeriod.trim());
     const periodMatch = { 
       frm_period: { $regex: new RegExp(`^\\s*${escapedPeriod}\\s*$`, "i") } 
     };
 
-    // Get stats by attendance (Filtered for target period)
-    const attendanceStats = await Redemption.aggregate([
-      { $match: periodMatch },
-      ...filteredRedemptionsAggregation,
-      {
-        $group: {
-          _id: "$beneficiary._id",
-          attendance: { $first: "$attendance" }
-        }
-      },
-      {
-        $group: {
-          _id: {
-            $cond: [
-              { $in: [{ $toLower: "$attendance" }, ["present", "redeemed"]] },
-              "present",
-              {
-                $cond: [
-                  { $in: [{ $toLower: "$attendance" }, ["absent", "unredeemed"]] },
-                  "absent",
-                  "none"
-                ]
-              }
-            ]
-          },
-          count: { $sum: 1 }
-        }
-      }
-    ]);
+    const targetPeriodRedemptions = await Redemption.find({
+      ...initialMatch,
+      ...periodMatch
+    }).lean();
 
-    // Get stats by FRM period (Filtered - last 12 periods)
-    const periodStatsRaw = await Redemption.aggregate([
-      ...filteredRedemptionsAggregation,
+    // Process target period redemptions in memory for attendance and breakdowns
+    const attendanceCounts: any = { present: 0, absent: 0, none: 0 };
+    const muniStats = new Map<string, { redeemed: number, unredeemed: number }>();
+    const provStats = new Map<string, { redeemed: number, unredeemed: number }>();
+    
+    // Track unique beneficiaries processed for the target period
+    const processedBenIds = new Set<string>();
+
+    targetPeriodRedemptions.forEach(r => {
+      const bId = getBenId(r);
+      if (!bId || processedBenIds.has(bId)) return;
+      processedBenIds.add(bId);
+
+      const ben = benMapById.get(bId);
+      const att = (r.attendance || "").toLowerCase();
+      const isPresent = ["present", "redeemed"].includes(att);
+      const isAbsent = ["absent", "unredeemed"].includes(att);
+
+      if (isPresent) attendanceCounts.present++;
+      else if (isAbsent) attendanceCounts.absent++;
+      else attendanceCounts.none++;
+
+      // Municipality breakdown
+      const mKey = `${ben.province || "Unknown"}|${ben.municipality || "Unknown"}`;
+      if (!muniStats.has(mKey)) muniStats.set(mKey, { redeemed: 0, unredeemed: 0 });
+      const mS = muniStats.get(mKey)!;
+      if (isPresent) mS.redeemed++;
+      if (isAbsent) mS.unredeemed++;
+
+      // Province breakdown
+      const pKey = ben.province || "Unknown";
+      if (!provStats.has(pKey)) provStats.set(pKey, { redeemed: 0, unredeemed: 0 });
+      const pS = provStats.get(pKey)!;
+      if (isPresent) pS.redeemed++;
+      if (isAbsent) pS.unredeemed++;
+    });
+
+    const attendanceStats = [
+      { _id: "present", count: attendanceCounts.present },
+      { _id: "absent", count: attendanceCounts.absent },
+      { _id: "none", count: attendanceCounts.none }
+    ];
+
+    // 4. Get Trend Stats (last 12 periods)
+    const trendStatsRaw = await Redemption.aggregate([
+      { $match: initialMatch },
       {
         $group: {
-          _id: { beneficiary_id: "$beneficiary._id", period: "$frm_period" },
+          _id: { 
+            ben_id: { $ifNull: ["$beneficiary_id", "$hhid"] }, 
+            period: "$frm_period" 
+          },
           attendance: { $first: "$attendance" }
         }
       },
@@ -374,10 +428,7 @@ export const getRedemptionDashboardStats = catchAsync(
           redeemed: {
             $sum: { 
               $cond: [
-                { $or: [
-                  { $eq: [{ $toLower: "$attendance" }, "present"] },
-                  { $eq: [{ $toLower: "$attendance" }, "redeemed"] }
-                ]}, 
+                { $in: [{ $toLower: "$attendance" }, ["present", "redeemed"]] },
                 1, 
                 0
               ] 
@@ -386,10 +437,7 @@ export const getRedemptionDashboardStats = catchAsync(
           unredeemed: {
             $sum: { 
               $cond: [
-                { $or: [
-                  { $eq: [{ $toLower: "$attendance" }, "absent"] },
-                  { $eq: [{ $toLower: "$attendance" }, "unredeemed"] }
-                ]}, 
+                { $in: [{ $toLower: "$attendance" }, ["absent", "unredeemed"]] },
                 1, 
                 0
               ] 
@@ -401,7 +449,7 @@ export const getRedemptionDashboardStats = catchAsync(
       { $limit: 12 }
     ]);
 
-    const periodStats = periodStatsRaw.map(p => {
+    const periodStats = trendStatsRaw.map(p => {
       const redeemed = p.redeemed || 0;
       const unredeemed = p.unredeemed || 0;
       const remaining = totalBeneficiaries - redeemed - unredeemed;
@@ -414,152 +462,46 @@ export const getRedemptionDashboardStats = catchAsync(
       };
     });
 
-    // Get municipality breakdown (Target vs Validated) for the target period
-    // 1. Get targets (all beneficiaries per municipality)
-    const targets = await Beneficiary.aggregate([
-      { $match: beneficiaryQuery },
-      {
-        $group: {
-          _id: {
-            municipality: { $toUpper: { $trim: { input: "$municipality" } } },
-            province: { $toUpper: { $trim: { input: "$province" } } }
-          },
-          target: { $sum: 1 }
-        }
-      },
-      { $sort: { "_id.municipality": 1 } }
-    ]);
-
-    // 2. Get recorded (redemptions for target period per municipality)
-    const recorded = await Redemption.aggregate([
-      { $match: periodMatch },
-      ...filteredRedemptionsAggregation,
-      {
-        $group: {
-          _id: "$beneficiary._id",
-          attendance: { $first: "$attendance" },
-          municipality: { $first: "$beneficiary.municipality" },
-          province: { $first: "$beneficiary.province" }
-        }
-      },
-      {
-        $group: {
-          _id: {
-            municipality: { $toUpper: { $trim: { input: "$municipality" } } },
-            province: { $toUpper: { $trim: { input: "$province" } } }
-          },
-          redeemed: {
-            $sum: { 
-              $cond: [
-                { $or: [
-                  { $eq: [{ $toLower: "$attendance" }, "present"] },
-                  { $eq: [{ $toLower: "$attendance" }, "redeemed"] }
-                ]}, 
-                1, 
-                0
-              ] 
-            }
-          },
-          unredeemed: {
-            $sum: { 
-              $cond: [
-                { $or: [
-                  { $eq: [{ $toLower: "$attendance" }, "absent"] },
-                  { $eq: [{ $toLower: "$attendance" }, "unredeemed"] }
-                ]}, 
-                1, 
-                0
-              ] 
-            }
-          }
-        }
-      }
-    ]);
-
-    // Merge targets and recorded
-    const municipalityBreakdown = targets.map(t => {
-      const rec = recorded.find(r => r._id.municipality === t._id.municipality && r._id.province === t._id.province);
-      const redeemed = rec ? rec.redeemed : 0;
-      const unredeemed = rec ? rec.unredeemed : 0;
-      const remaining = t.target - redeemed - unredeemed;
-      return {
-        municipality: t._id.municipality || "Unknown",
-        province: t._id.province || "Unknown",
-        target: t.target,
-        redeemed,
-        unredeemed,
-        remaining: remaining > 0 ? remaining : 0
-      };
+    // 5. Build Final Breakdowns
+    // Municipality breakdown (Targets from in-memory beneficiaries)
+    const muniTargets = new Map<string, number>();
+    beneficiaries.forEach(b => {
+      const key = `${b.province || "Unknown"}|${b.municipality || "Unknown"}`;
+      muniTargets.set(key, (muniTargets.get(key) || 0) + 1);
     });
 
-    // Get province breakdown (Target vs Validated) for the target period
-    // 1. Get targets (all beneficiaries per province)
-    const provinceTargets = await Beneficiary.aggregate([
-      { $match: beneficiaryQuery },
-      {
-        $group: {
-          _id: { $toUpper: { $trim: { input: "$province" } } },
-          target: { $sum: 1 }
-        }
-      },
-      { $sort: { _id: 1 } }
-    ]);
-
-    // 2. Get recorded (redemptions for target period per province)
-    const provinceRecorded = await Redemption.aggregate([
-      { $match: periodMatch },
-      ...filteredRedemptionsAggregation,
-      {
-        $group: {
-          _id: "$beneficiary._id",
-          attendance: { $first: "$attendance" },
-          province: { $first: "$beneficiary.province" }
-        }
-      },
-      {
-        $group: {
-          _id: { $toUpper: { $trim: { input: "$province" } } },
-          redeemed: {
-            $sum: { 
-              $cond: [
-                { $or: [
-                  { $eq: [{ $toLower: "$attendance" }, "present"] },
-                  { $eq: [{ $toLower: "$attendance" }, "redeemed"] }
-                ]}, 
-                1, 
-                0
-              ] 
-            }
-          },
-          unredeemed: {
-            $sum: { 
-              $cond: [
-                { $or: [
-                  { $eq: [{ $toLower: "$attendance" }, "absent"] },
-                  { $eq: [{ $toLower: "$attendance" }, "unredeemed"] }
-                ]}, 
-                1, 
-                0
-              ] 
-            }
-          }
-        }
-      }
-    ]);
-
-    const provinceBreakdown = provinceTargets.map(t => {
-      const rec = provinceRecorded.find(r => r._id === t._id);
-      const redeemed = rec ? rec.redeemed : 0;
-      const unredeemed = rec ? rec.unredeemed : 0;
-      const remaining = t.target - redeemed - unredeemed;
+    const municipalityBreakdown = Array.from(muniTargets.entries()).map(([key, target]) => {
+      const [province, municipality] = key.split("|");
+      const rec = muniStats.get(key) || { redeemed: 0, unredeemed: 0 };
+      const remaining = target - rec.redeemed - rec.unredeemed;
       return {
-        province: t._id || "Unknown",
-        target: t.target,
-        redeemed,
-        unredeemed,
+        municipality,
+        province,
+        target,
+        redeemed: rec.redeemed,
+        unredeemed: rec.unredeemed,
         remaining: remaining > 0 ? remaining : 0
       };
+    }).sort((a, b) => a.municipality.localeCompare(b.municipality));
+
+    // Province breakdown
+    const provTargets = new Map<string, number>();
+    beneficiaries.forEach(b => {
+      const key = b.province || "Unknown";
+      provTargets.set(key, (provTargets.get(key) || 0) + 1);
     });
+
+    const provinceBreakdown = Array.from(provTargets.entries()).map(([province, target]) => {
+      const rec = provStats.get(province) || { redeemed: 0, unredeemed: 0 };
+      const remaining = target - rec.redeemed - rec.unredeemed;
+      return {
+        province,
+        target,
+        redeemed: rec.redeemed,
+        unredeemed: rec.unredeemed,
+        remaining: remaining > 0 ? remaining : 0
+      };
+    }).sort((a, b) => a.province.localeCompare(b.province));
 
     res.status(200).json({
       totalRedemptions,
@@ -603,138 +545,132 @@ export const getNESDashboardStats = catchAsync(
       beneficiaryQuery.municipality = { $regex: new RegExp(`^\\s*${escapeRegex(municipality.toString().trim())}\\s*$`, "i") };
     }
 
-    // Filter NES records by area using a join with Beneficiary collection
-    const filteredNESAggregation = [
-      {
-        $addFields: {
-          beneficiary_id_obj: {
-            $cond: {
-              if: { $eq: [{ $type: "$beneficiary_id" }, "objectId"] },
-              then: "$beneficiary_id",
-              else: {
-                $cond: {
-                  if: { $and: [
-                    { $ne: ["$beneficiary_id", ""] },
-                    { $ne: ["$beneficiary_id", null] },
-                    { $eq: [{ $type: "$beneficiary_id" }, "string"] },
-                    { $eq: [{ $strLenCP: "$beneficiary_id" }, 24] }
-                  ]},
-                  then: { $toObjectId: "$beneficiary_id" },
-                  else: null
-                }
-              }
-            }
-          },
-          norm_beneficiary_id: { $toString: "$beneficiary_id" }
-        }
-      },
-      {
-        $lookup: {
-          from: "beneficiaries",
-          let: { b_id: "$beneficiary_id_obj", h_id: "$hhid", b_id_str: "$norm_beneficiary_id" },
-          pipeline: [
-            {
-              $match: {
-                $expr: {
-                  $or: [
-                    { $eq: ["$_id", "$$b_id"] },
-                    { $eq: [{ $toString: "$_id" }, "$$b_id_str"] },
-                    { 
-                      $and: [
-                        { $ne: ["$$h_id", ""] },
-                        { $ne: ["$$h_id", null] },
-                        { $ne: ["$$h_id", "0"] },
-                        { $eq: ["$hhid", "$$h_id"] }
-                      ]
-                    }
-                  ]
-                }
-              }
-            },
-            { $limit: 1 }
-          ],
-          as: "beneficiary"
-        }
-      },
-      { $unwind: "$beneficiary" },
-      { $match: prefixQueryKeys(beneficiaryQuery, "beneficiary") }
-    ];
+    // 1. Fetch relevant beneficiaries once (This is the source of truth for the dashboard)
+    const beneficiaries = await Beneficiary.find(beneficiaryQuery).select("_id hhid province municipality").lean();
+    const totalBeneficiaries = beneficiaries.length;
+    
+    if (totalBeneficiaries === 0) {
+      return res.status(200).json({
+        totalNES: 0,
+        attendanceStats: [],
+        periodStats: [],
+        municipalityBreakdown: [],
+        provinceBreakdown: []
+      });
+    }
 
+    const beneficiaryIdList = beneficiaries.map(b => b._id.toString());
+    const beneficiaryIdObjs = beneficiaries.map(b => b._id);
+    const hhidList = beneficiaries.map(b => b.hhid).filter(h => !!h && h !== "0" && h !== "");
+
+    // Create maps for quick lookup
+    const benMapById = new Map();
+    const benMapByHhid = new Map();
+    beneficiaries.forEach(b => {
+      benMapById.set(b._id.toString(), b);
+      if (b.hhid && b.hhid !== "0") {
+        benMapByHhid.set(b.hhid, b);
+      }
+    });
+
+    const initialMatch = {
+      $or: [
+        { beneficiary_id: { $in: beneficiaryIdList } },
+        { beneficiary_id: { $in: beneficiaryIdObjs } },
+        { hhid: { $in: hhidList } }
+      ]
+    };
+
+    // Helper to get normalized beneficiary ID from a NES record
+    const getBenId = (r: any) => {
+      if (r.beneficiary_id) {
+        const idStr = r.beneficiary_id.toString();
+        if (benMapById.has(idStr)) return idStr;
+      }
+      if (r.hhid && r.hhid !== "0" && benMapByHhid.has(r.hhid)) {
+        return benMapByHhid.get(r.hhid)._id.toString();
+      }
+      return null;
+    };
+
+    // 2. Get Total NES (ever, for these beneficiaries)
     const totalNESResult = await NES.aggregate([
-      ...filteredNESAggregation,
+      { $match: initialMatch },
       {
         $group: {
-          _id: { beneficiary_id: "$beneficiary._id", period: "$frm_period" }
+          _id: { 
+            ben_id: { $ifNull: ["$beneficiary_id", "$hhid"] }, 
+            period: "$frm_period" 
+          }
         }
       },
       { $count: "total" }
     ]);
     const totalNES = totalNESResult[0]?.total || 0;
-    const totalBeneficiaries = await Beneficiary.countDocuments(beneficiaryQuery);
-    
-    // Escape regex special characters in the period name (like parentheses)
+
+    // 3. Get Stats for Target Period
     const escapedPeriod = escapeRegex(targetPeriod.trim());
     const periodMatch = { 
       frm_period: { $regex: new RegExp(`^\\s*${escapedPeriod}\\s*$`, "i") } 
     };
 
-    // Get stats by attendance (Filtered for target period)
-    const attendanceStats = await NES.aggregate([
-      { $match: periodMatch },
-      ...filteredNESAggregation,
+    const targetPeriodNES = await NES.find({
+      ...initialMatch,
+      ...periodMatch
+    }).lean();
+
+    // Process target period NES records in memory for attendance and breakdowns
+    const attendanceCounts: any = { present: 0, absent: 0, none: 0 };
+    const muniStats = new Map<string, { attended: number, unattended: number }>();
+    const provStats = new Map<string, { attended: number, unattended: number }>();
+    
+    // Track unique beneficiaries processed for the target period
+    const processedBenIds = new Set<string>();
+
+    targetPeriodNES.forEach(r => {
+      const bId = getBenId(r);
+      if (!bId || processedBenIds.has(bId)) return;
+      processedBenIds.add(bId);
+
+      const ben = benMapById.get(bId);
+      const att = (r.attendance || "").toLowerCase();
+      const isPresent = ["present", "redeemed"].includes(att);
+      const isAbsent = ["absent", "unredeemed"].includes(att);
+
+      if (isPresent) attendanceCounts.present++;
+      else if (isAbsent) attendanceCounts.absent++;
+      else attendanceCounts.none++;
+
+      // Municipality breakdown
+      const mKey = `${ben.province || "Unknown"}|${ben.municipality || "Unknown"}`;
+      if (!muniStats.has(mKey)) muniStats.set(mKey, { attended: 0, unattended: 0 });
+      const mS = muniStats.get(mKey)!;
+      if (isPresent) mS.attended++;
+      if (isAbsent) mS.unattended++;
+
+      // Province breakdown
+      const pKey = ben.province || "Unknown";
+      if (!provStats.has(pKey)) provStats.set(pKey, { attended: 0, unattended: 0 });
+      const pS = provStats.get(pKey)!;
+      if (isPresent) pS.attended++;
+      if (isAbsent) pS.unattended++;
+    });
+
+    const attendanceStats = [
+      { _id: "present", count: attendanceCounts.present },
+      { _id: "absent", count: attendanceCounts.absent },
+      { _id: "none", count: attendanceCounts.none }
+    ];
+
+    // 4. Get Trend Stats (last 12 periods)
+    const trendStatsRaw = await NES.aggregate([
+      { $match: initialMatch },
       {
         $group: {
-          _id: "$beneficiary._id",
-          attendance: { $first: "$attendance" }
-        }
-      },
-      {
-        $group: {
-          _id: {
-            $cond: [
-              { $in: [{ $toLower: "$attendance" }, ["present", "redeemed"]] },
-              "present",
-              {
-                $cond: [
-                  { $in: [{ $toLower: "$attendance" }, ["absent", "unredeemed"]] },
-                  "absent",
-                  "none"
-                ]
-              }
-            ]
+          _id: { 
+            ben_id: { $ifNull: ["$beneficiary_id", "$hhid"] }, 
+            period: "$frm_period" 
           },
-          count: { $sum: 1 }
-        }
-      }
-    ]);
-
-    // Get stats by top reasons for non-attendance (Filtered for target period)
-    const reasonStats = await NES.aggregate([
-      { 
-        $match: { 
-          ...periodMatch, 
-          attendance: { $in: ["absent", "unredeemed"] }, 
-          reason: { $ne: "" } 
-        } 
-      },
-      ...filteredNESAggregation,
-      {
-        $group: {
-          _id: "$beneficiary._id",
-          reason: { $first: "$reason" }
-        }
-      },
-      { $group: { _id: "$reason", count: { $sum: 1 } } },
-      { $sort: { count: -1 } },
-      { $limit: 5 }
-    ]);
-
-    // Get stats by FRM period (Filtered - last 12 periods)
-    const periodStatsRaw = await NES.aggregate([
-      ...filteredNESAggregation,
-      {
-        $group: {
-          _id: { beneficiary_id: "$beneficiary._id", period: "$frm_period" },
           attendance: { $first: "$attendance" }
         }
       },
@@ -744,22 +680,16 @@ export const getNESDashboardStats = catchAsync(
           attended: {
             $sum: { 
               $cond: [
-                { $or: [
-                  { $eq: [{ $toLower: "$attendance" }, "present"] },
-                  { $eq: [{ $toLower: "$attendance" }, "redeemed"] }
-                ]}, 
+                { $in: [{ $toLower: "$attendance" }, ["present", "redeemed"]] },
                 1, 
                 0
               ] 
             }
           },
-          absent: {
+          unattended: {
             $sum: { 
               $cond: [
-                { $or: [
-                  { $eq: [{ $toLower: "$attendance" }, "absent"] },
-                  { $eq: [{ $toLower: "$attendance" }, "unredeemed"] }
-                ]}, 
+                { $in: [{ $toLower: "$attendance" }, ["absent", "unredeemed"]] },
                 1, 
                 0
               ] 
@@ -771,171 +701,64 @@ export const getNESDashboardStats = catchAsync(
       { $limit: 12 }
     ]);
 
-    const periodStats = periodStatsRaw.map(p => {
+    const periodStats = trendStatsRaw.map(p => {
       const attended = p.attended || 0;
-      const absent = p.absent || 0;
-      const remaining = totalBeneficiaries - attended - absent;
+      const unattended = p.unattended || 0;
+      const remaining = totalBeneficiaries - attended - unattended;
       return {
         period: p._id,
         attended,
-        absent,
+        unattended,
         remaining: remaining > 0 ? remaining : 0,
         target: totalBeneficiaries
       };
     });
 
-    // Get municipality breakdown (Target vs Attended vs Absent) for the target period
-    // 1. Get targets (all beneficiaries per municipality)
-    const targets = await Beneficiary.aggregate([
-      { $match: beneficiaryQuery },
-      {
-        $group: {
-          _id: {
-            municipality: { $toUpper: { $trim: { input: "$municipality" } } },
-            province: { $toUpper: { $trim: { input: "$province" } } }
-          },
-          target: { $sum: 1 }
-        }
-      },
-      { $sort: { "_id.municipality": 1 } }
-    ]);
-
-    // 2. Get recorded (NES records for target period per municipality)
-    const recorded = await NES.aggregate([
-      { $match: periodMatch },
-      ...filteredNESAggregation,
-      {
-        $group: {
-          _id: "$beneficiary._id",
-          attendance: { $first: "$attendance" },
-          municipality: { $first: "$beneficiary.municipality" },
-          province: { $first: "$beneficiary.province" }
-        }
-      },
-      {
-        $group: {
-          _id: {
-            municipality: { $toUpper: { $trim: { input: "$municipality" } } },
-            province: { $toUpper: { $trim: { input: "$province" } } }
-          },
-          attended: {
-            $sum: { 
-              $cond: [
-                { $or: [
-                  { $eq: ["$attendance", "present"] },
-                  { $eq: ["$attendance", "redeemed"] }
-                ]}, 
-                1, 
-                0
-              ] 
-            }
-          },
-          absent: {
-            $sum: { 
-              $cond: [
-                { $or: [
-                  { $eq: ["$attendance", "absent"] },
-                  { $eq: ["$attendance", "unredeemed"] }
-                ]}, 
-                1, 
-                0
-              ] 
-            }
-          }
-        }
-      }
-    ]);
-
-    // Merge targets and recorded
-    const municipalityBreakdown = targets.map(t => {
-      const rec = recorded.find(r => r._id.municipality === t._id.municipality && r._id.province === t._id.province);
-      const attended = rec ? rec.attended : 0;
-      const absent = rec ? rec.absent : 0;
-      const remaining = t.target - attended - absent;
-      return {
-        municipality: t._id.municipality || "Unknown",
-        province: t._id.province || "Unknown",
-        target: t.target,
-        attended,
-        absent,
-        remaining: remaining > 0 ? remaining : 0
-      };
+    // 5. Build Final Breakdowns
+    // Municipality breakdown (Targets from in-memory beneficiaries)
+    const muniTargets = new Map<string, number>();
+    beneficiaries.forEach(b => {
+      const key = `${b.province || "Unknown"}|${b.municipality || "Unknown"}`;
+      muniTargets.set(key, (muniTargets.get(key) || 0) + 1);
     });
 
-    // Get province breakdown (Target vs Attended vs Absent) for the target period
-    // 1. Get targets (all beneficiaries per province)
-    const provinceTargets = await Beneficiary.aggregate([
-      { $match: beneficiaryQuery },
-      {
-        $group: {
-          _id: { $toUpper: { $trim: { input: "$province" } } },
-          target: { $sum: 1 }
-        }
-      },
-      { $sort: { _id: 1 } }
-    ]);
-
-    // 2. Get recorded (NES records for target period per province)
-    const provinceRecorded = await NES.aggregate([
-      { $match: periodMatch },
-      ...filteredNESAggregation,
-      {
-        $group: {
-          _id: "$beneficiary._id",
-          attendance: { $first: "$attendance" },
-          province: { $first: "$beneficiary.province" }
-        }
-      },
-      {
-        $group: {
-          _id: { $toUpper: { $trim: { input: "$province" } } },
-          attended: {
-            $sum: { 
-              $cond: [
-                { $or: [
-                  { $eq: ["$attendance", "present"] },
-                  { $eq: ["$attendance", "redeemed"] }
-                ]}, 
-                1, 
-                0
-              ] 
-            }
-          },
-          absent: {
-            $sum: { 
-              $cond: [
-                { $or: [
-                  { $eq: ["$attendance", "absent"] },
-                  { $eq: ["$attendance", "unredeemed"] }
-                ]}, 
-                1, 
-                0
-              ] 
-            }
-          }
-        }
-      }
-    ]);
-
-    const provinceBreakdown = provinceTargets.map(t => {
-      const rec = provinceRecorded.find(r => r._id === t._id);
-      const attended = rec ? rec.attended : 0;
-      const absent = rec ? rec.absent : 0;
-      const remaining = t.target - attended - absent;
+    const municipalityBreakdown = Array.from(muniTargets.entries()).map(([key, target]) => {
+      const [province, municipality] = key.split("|");
+      const rec = muniStats.get(key) || { attended: 0, unattended: 0 };
+      const remaining = target - rec.attended - rec.unattended;
       return {
-        province: t._id || "Unknown",
-        target: t.target,
-        attended,
-        absent,
+        municipality,
+        province,
+        target,
+        attended: rec.attended,
+        unattended: rec.unattended,
         remaining: remaining > 0 ? remaining : 0
       };
+    }).sort((a, b) => a.municipality.localeCompare(b.municipality));
+
+    // Province breakdown
+    const provTargets = new Map<string, number>();
+    beneficiaries.forEach(b => {
+      const key = b.province || "Unknown";
+      provTargets.set(key, (provTargets.get(key) || 0) + 1);
     });
+
+    const provinceBreakdown = Array.from(provTargets.entries()).map(([province, target]) => {
+      const rec = provStats.get(province) || { attended: 0, unattended: 0 };
+      const remaining = target - rec.attended - rec.unattended;
+      return {
+        province,
+        target,
+        attended: rec.attended,
+        unattended: rec.unattended,
+        remaining: remaining > 0 ? remaining : 0
+      };
+    }).sort((a, b) => a.province.localeCompare(b.province));
 
     res.status(200).json({
       totalNES,
       attendanceStats,
       periodStats,
-      reasonStats,
       municipalityBreakdown,
       provinceBreakdown
     });
