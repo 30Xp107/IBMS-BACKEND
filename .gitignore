@@ -12,6 +12,7 @@ node_modules
 .env
 dist
 dist-ssr
+*.tsbuildinfo
 *.local
 
 # Editor directories and files
