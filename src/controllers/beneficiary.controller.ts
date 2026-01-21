@@ -81,16 +81,18 @@ const buildBeneficiaryQuery = async (req: Request, customFilters?: any) => {
     }
   }
 
-  // Filter by redemption status if provided
-  if (redemption_status && redemption_status !== "all") {
+  // Filter by redemption status or period if provided
+  if ((redemption_status && redemption_status !== "all") || (frm_period && frm_period !== "all")) {
     let attendanceMatch: any;
     
-    if (redemption_status === "present" || redemption_status === "redeemed") {
-      attendanceMatch = { $in: ["present", "redeemed", "Present", "Redeemed"] };
-    } else if (redemption_status === "absent" || redemption_status === "unredeemed") {
-      attendanceMatch = { $in: ["absent", "unredeemed", "Absent", "Unredeemed"] };
-    } else {
-      attendanceMatch = redemption_status;
+    if (redemption_status && redemption_status !== "all") {
+      if (redemption_status === "present" || redemption_status === "redeemed") {
+        attendanceMatch = { $in: ["present", "redeemed", "Present", "Redeemed"] };
+      } else if (redemption_status === "absent" || redemption_status === "unredeemed") {
+        attendanceMatch = { $in: ["absent", "unredeemed", "Absent", "Unredeemed"] };
+      } else {
+        attendanceMatch = redemption_status;
+      }
     }
 
     const redemptionQuery: any = {};
@@ -100,7 +102,7 @@ const buildBeneficiaryQuery = async (req: Request, customFilters?: any) => {
       redemptionQuery.frm_period = { $regex: new RegExp(`^\\s*${escapedPeriod}\\s*$`, "i") };
     }
     
-    if (redemption_status !== "none") {
+    if (attendanceMatch) {
       redemptionQuery.attendance = attendanceMatch;
     }
 
