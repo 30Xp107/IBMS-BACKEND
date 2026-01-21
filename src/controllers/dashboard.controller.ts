@@ -41,10 +41,11 @@ const normalizeArea = (str: string | undefined | null): string => {
   if (!str) return "Unknown";
   return str
     .trim()
+    .replace(/\s+/g, " ") // Replace multiple whitespaces with a single space
     .toLowerCase()
-    .split(' ')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
+    .split(" ")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 };
 
 export const getDashboardStats = catchAsync(
