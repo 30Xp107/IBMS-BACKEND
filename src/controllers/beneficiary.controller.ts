@@ -51,7 +51,7 @@ const escapeRegex = (string: string) => {
 import { Redemption } from "../models/redemption.model";
 import { NES } from "../models/nes.model";
 
-const buildBeneficiaryQuery = async (req: Request) => {
+const buildBeneficiaryQuery = async (req: Request, customFilters?: any) => {
   const user = (req as any).user;
   const { 
     barangay, 
@@ -63,7 +63,7 @@ const buildBeneficiaryQuery = async (req: Request) => {
     redemption_status,
     frm_period,
     is4ps
-  } = req.query;
+  } = customFilters || req.query;
 
   const query: any = {};
   const filters: any[] = [];
@@ -82,7 +82,7 @@ const buildBeneficiaryQuery = async (req: Request) => {
   }
 
   // Filter by redemption status if provided
-  if (redemption_status && redemption_status !== "all" && frm_period) {
+  if (redemption_status && redemption_status !== "all") {
     let attendanceMatch: any;
     
     if (redemption_status === "present" || redemption_status === "redeemed") {
@@ -93,9 +93,12 @@ const buildBeneficiaryQuery = async (req: Request) => {
       attendanceMatch = redemption_status;
     }
 
-    const escapedPeriod = escapeRegex((frm_period as string).trim());
-    const periodMatch = { $regex: new RegExp(`^\\s*${escapedPeriod}\\s*$`, "i") };
-    const redemptionQuery: any = { frm_period: periodMatch };
+    const redemptionQuery: any = {};
+    
+    if (frm_period && frm_period !== "all") {
+      const escapedPeriod = escapeRegex((frm_period as string).trim());
+      redemptionQuery.frm_period = { $regex: new RegExp(`^\\s*${escapedPeriod}\\s*$`, "i") };
+    }
     
     if (redemption_status !== "none") {
       redemptionQuery.attendance = attendanceMatch;
@@ -1189,49 +1192,7 @@ export const bulkDeleteBeneficiaries = catchAsync(
     if (all) {
       // If deleting all based on filters
       if (filters) {
-        const filterConditions: any[] = [];
-        
-        if (filters.search) {
-          filterConditions.push({
-            $or: [
-              { hhid: { $regex: filters.search, $options: "i" } },
-              { pkno: { $regex: filters.search, $options: "i" } },
-              { first_name: { $regex: filters.search, $options: "i" } },
-              { last_name: { $regex: filters.search, $options: "i" } },
-            ]
-          });
-        }
-        
-        if (filters.region && filters.region !== "all") {
-          const escapedValue = (filters.region as string).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          filterConditions.push({ region: { $regex: new RegExp(`^${escapedValue}$`, "i") } });
-        }
-        if (filters.province && filters.province !== "all") {
-          const escapedValue = (filters.province as string).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          filterConditions.push({ province: { $regex: new RegExp(`^${escapedValue}$`, "i") } });
-        }
-        if (filters.municipality && filters.municipality !== "all") {
-            const val = (filters.municipality as string).trim();
-            const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?(\s*\(.+?\))?$/i);
-            const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?(\s*\(.+?\))?$/i);
-            
-            const core = (cityMatch?.[2] || muniMatch?.[2] || val).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            const pattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)(\\s*\\(.+?\\))?$`;
-            
-            filterConditions.push({ municipality: { $regex: new RegExp(pattern, "i") } });
-          }
-        if (filters.barangay && filters.barangay !== "all") {
-          const escapedValue = (filters.barangay as string).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-          filterConditions.push({ barangay: { $regex: new RegExp(`^${escapedValue}$`, "i") } });
-        }
-
-        if (filterConditions.length > 0) {
-          if (deleteQuery.$and) {
-            deleteQuery.$and.push(...filterConditions);
-          } else {
-            deleteQuery.$and = filterConditions;
-          }
-        }
+        deleteQuery = await buildBeneficiaryQuery(req, filters);
       }
     } else {
       // If deleting specific IDs
