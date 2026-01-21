@@ -294,6 +294,7 @@ export const getRedemptionDashboardStats = catchAsync(
                       $and: [
                         { $ne: ["$$h_id", ""] },
                         { $ne: ["$$h_id", null] },
+                        { $ne: ["$$h_id", "0"] },
                         { $eq: ["$hhid", "$$h_id"] }
                       ]
                     }
@@ -342,11 +343,11 @@ export const getRedemptionDashboardStats = catchAsync(
         $group: {
           _id: {
             $cond: [
-              { $in: ["$attendance", ["present", "redeemed"]] },
+              { $in: [{ $toLower: "$attendance" }, ["present", "redeemed"]] },
               "present",
               {
                 $cond: [
-                  { $in: ["$attendance", ["absent", "unredeemed"]] },
+                  { $in: [{ $toLower: "$attendance" }, ["absent", "unredeemed"]] },
                   "absent",
                   "none"
                 ]
@@ -374,8 +375,8 @@ export const getRedemptionDashboardStats = catchAsync(
             $sum: { 
               $cond: [
                 { $or: [
-                  { $eq: ["$attendance", "present"] },
-                  { $eq: ["$attendance", "redeemed"] }
+                  { $eq: [{ $toLower: "$attendance" }, "present"] },
+                  { $eq: [{ $toLower: "$attendance" }, "redeemed"] }
                 ]}, 
                 1, 
                 0
@@ -386,8 +387,8 @@ export const getRedemptionDashboardStats = catchAsync(
             $sum: { 
               $cond: [
                 { $or: [
-                  { $eq: ["$attendance", "absent"] },
-                  { $eq: ["$attendance", "unredeemed"] }
+                  { $eq: [{ $toLower: "$attendance" }, "absent"] },
+                  { $eq: [{ $toLower: "$attendance" }, "unredeemed"] }
                 ]}, 
                 1, 
                 0
@@ -451,8 +452,8 @@ export const getRedemptionDashboardStats = catchAsync(
             $sum: { 
               $cond: [
                 { $or: [
-                  { $eq: ["$attendance", "present"] },
-                  { $eq: ["$attendance", "redeemed"] }
+                  { $eq: [{ $toLower: "$attendance" }, "present"] },
+                  { $eq: [{ $toLower: "$attendance" }, "redeemed"] }
                 ]}, 
                 1, 
                 0
@@ -463,8 +464,8 @@ export const getRedemptionDashboardStats = catchAsync(
             $sum: { 
               $cond: [
                 { $or: [
-                  { $eq: ["$attendance", "absent"] },
-                  { $eq: ["$attendance", "unredeemed"] }
+                  { $eq: [{ $toLower: "$attendance" }, "absent"] },
+                  { $eq: [{ $toLower: "$attendance" }, "unredeemed"] }
                 ]}, 
                 1, 
                 0
@@ -522,8 +523,8 @@ export const getRedemptionDashboardStats = catchAsync(
             $sum: { 
               $cond: [
                 { $or: [
-                  { $eq: ["$attendance", "present"] },
-                  { $eq: ["$attendance", "redeemed"] }
+                  { $eq: [{ $toLower: "$attendance" }, "present"] },
+                  { $eq: [{ $toLower: "$attendance" }, "redeemed"] }
                 ]}, 
                 1, 
                 0
@@ -534,8 +535,8 @@ export const getRedemptionDashboardStats = catchAsync(
             $sum: { 
               $cond: [
                 { $or: [
-                  { $eq: ["$attendance", "absent"] },
-                  { $eq: ["$attendance", "unredeemed"] }
+                  { $eq: [{ $toLower: "$attendance" }, "absent"] },
+                  { $eq: [{ $toLower: "$attendance" }, "unredeemed"] }
                 ]}, 
                 1, 
                 0
@@ -642,6 +643,7 @@ export const getNESDashboardStats = catchAsync(
                       $and: [
                         { $ne: ["$$h_id", ""] },
                         { $ne: ["$$h_id", null] },
+                        { $ne: ["$$h_id", "0"] },
                         { $eq: ["$hhid", "$$h_id"] }
                       ]
                     }
@@ -690,11 +692,11 @@ export const getNESDashboardStats = catchAsync(
         $group: {
           _id: {
             $cond: [
-              { $in: ["$attendance", ["present", "redeemed"]] },
+              { $in: [{ $toLower: "$attendance" }, ["present", "redeemed"]] },
               "present",
               {
                 $cond: [
-                  { $in: ["$attendance", ["absent", "unredeemed"]] },
+                  { $in: [{ $toLower: "$attendance" }, ["absent", "unredeemed"]] },
                   "absent",
                   "none"
                 ]
@@ -743,8 +745,8 @@ export const getNESDashboardStats = catchAsync(
             $sum: { 
               $cond: [
                 { $or: [
-                  { $eq: ["$attendance", "present"] },
-                  { $eq: ["$attendance", "redeemed"] }
+                  { $eq: [{ $toLower: "$attendance" }, "present"] },
+                  { $eq: [{ $toLower: "$attendance" }, "redeemed"] }
                 ]}, 
                 1, 
                 0
@@ -755,8 +757,8 @@ export const getNESDashboardStats = catchAsync(
             $sum: { 
               $cond: [
                 { $or: [
-                  { $eq: ["$attendance", "absent"] },
-                  { $eq: ["$attendance", "unredeemed"] }
+                  { $eq: [{ $toLower: "$attendance" }, "absent"] },
+                  { $eq: [{ $toLower: "$attendance" }, "unredeemed"] }
                 ]}, 
                 1, 
                 0
