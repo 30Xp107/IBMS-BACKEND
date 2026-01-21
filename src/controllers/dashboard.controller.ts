@@ -18,7 +18,7 @@ const prefixQueryKeys = (query: any, prefix: string): any => {
   
   const prefixed: any = {};
   for (const key in query) {
-    if (key === "$or" || key === "$and" || key === "$nor") {
+    if (key === "$or" || key === "$and" || key === "$nor") { 
       if (Array.isArray(query[key])) {
         prefixed[key] = query[key].map((subQuery: any) => prefixQueryKeys(subQuery, prefix));
       } else {
