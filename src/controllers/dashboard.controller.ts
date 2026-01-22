@@ -410,7 +410,7 @@ export const getRedemptionDashboardStats = catchAsync(
     const attendanceStats = [
       { _id: "present", count: attendanceCounts.present },
       { _id: "absent", count: attendanceCounts.absent },
-      { _id: "remaining", count: Math.max(0, totalBeneficiaries - attendanceCounts.present - attendanceCounts.absent) }
+      { _id: "none", count: attendanceCounts.none }
     ];
 
     // 4. Get Trend Stats (last 12 periods)
@@ -666,7 +666,7 @@ export const getNESDashboardStats = catchAsync(
     const attendanceStats = [
       { _id: "present", count: attendanceCounts.present },
       { _id: "absent", count: attendanceCounts.absent },
-      { _id: "remaining", count: Math.max(0, totalBeneficiaries - attendanceCounts.present - attendanceCounts.absent) }
+      { _id: "none", count: attendanceCounts.none }
     ];
 
     // 4. Get Trend Stats (last 12 periods)
