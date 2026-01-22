@@ -716,7 +716,7 @@ export const getExportData = catchAsync(
         "HH Members Pregnant": b.num_hh_pregnant || 0,
         "HH Members Lactating": b.num_hh_lactating || 0,
         "HH Members PWD": b.num_hh_pwd || 0,
-        "PWD Types": (b.pwd_types || []).join(", "),
+        "PWD Types": (b.pwd_types || []).map((t: any) => `${t.type} (${t.count})`).join(", "),
         "HH Members 60+": b.num_hh_60_above || 0,
         "HH Members Solo Parent": b.num_hh_solo_parent || 0,
         "FRM Period": frm_period || "N/A",

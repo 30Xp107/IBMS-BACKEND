@@ -1,5 +1,10 @@
 import mongoose, { Schema, Document } from "mongoose";
 
+export interface IPwdType {
+  type: string;
+  count: number;
+}
+
 export interface IBeneficiary extends Document {
   hhid: string;
   pkno: string;
@@ -20,7 +25,7 @@ export interface IBeneficiary extends Document {
   num_hh_pregnant?: number;
   num_hh_lactating?: number;
   num_hh_pwd?: number;
-  pwd_types?: string[];
+  pwd_types?: IPwdType[];
   num_hh_60_above?: number;
   num_hh_solo_parent?: number;
   createdAt: Date;
@@ -52,7 +57,13 @@ const beneficiarySchema = new Schema<IBeneficiary>(
     num_hh_pregnant: { type: Number, default: 0 },
     num_hh_lactating: { type: Number, default: 0 },
     num_hh_pwd: { type: Number, default: 0 },
-    pwd_types: { type: [String], default: [] },
+    pwd_types: { 
+      type: [{
+        type: { type: String },
+        count: { type: Number, default: 1 }
+      }], 
+      default: [] 
+    },
     num_hh_60_above: { type: Number, default: 0 },
     num_hh_solo_parent: { type: Number, default: 0 },
   },
