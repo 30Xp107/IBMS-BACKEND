@@ -715,7 +715,7 @@ export const getNESDashboardStats = catchAsync(
       return {
         period: p._id,
         attended,
-        unattended,
+        absent: unattended,
         remaining: remaining > 0 ? remaining : 0,
         target: totalBeneficiaries
       };
@@ -740,7 +740,7 @@ export const getNESDashboardStats = catchAsync(
         province,
         target,
         attended: rec.attended,
-        unattended: rec.unattended,
+        absent: rec.unattended,
         remaining: remaining > 0 ? remaining : 0
       };
     }).sort((a, b) => a.municipality.localeCompare(b.municipality));
@@ -759,7 +759,7 @@ export const getNESDashboardStats = catchAsync(
         province,
         target,
         attended: rec.attended,
-        unattended: rec.unattended,
+        absent: rec.unattended,
         remaining: remaining > 0 ? remaining : 0
       };
     }).sort((a, b) => a.province.localeCompare(b.province));
