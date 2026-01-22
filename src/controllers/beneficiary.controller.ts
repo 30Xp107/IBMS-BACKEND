@@ -106,10 +106,21 @@ const buildBeneficiaryQuery = async (req: Request, customFilters?: any) => {
       redemptionQuery.attendance = attendanceMatch;
     }
 
-    const [redemptions, nesRecords] = await Promise.all([
-      Redemption.find(redemptionQuery).select("beneficiary_id hhid").lean(),
-      NES.find(redemptionQuery).select("beneficiary_id hhid").lean()
-    ]);
+    let redemptions: any[] = [];
+    let nesRecords: any[] = [];
+
+    // Focus on specific models based on redemption_status as requested
+    if (redemption_status === "redeemed" || redemption_status === "unredeemed") {
+      redemptions = await Redemption.find(redemptionQuery).select("beneficiary_id hhid").lean();
+    } else if (redemption_status === "present" || redemption_status === "absent") {
+      nesRecords = await NES.find(redemptionQuery).select("beneficiary_id hhid").lean();
+    } else {
+      // Fallback for "all" or other statuses (like "none")
+      [redemptions, nesRecords] = await Promise.all([
+        Redemption.find(redemptionQuery).select("beneficiary_id hhid").lean(),
+        NES.find(redemptionQuery).select("beneficiary_id hhid").lean()
+      ]);
+    }
 
     const matchedBenIds = new Set<string>();
     const matchedHhids = new Set<string>();
