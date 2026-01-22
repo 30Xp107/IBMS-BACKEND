@@ -16,6 +16,13 @@ export interface IBeneficiary extends Document {
   contact?: string;
   is4ps?: string;
   status: string;
+  num_hh_0_18?: number;
+  num_hh_pregnant?: number;
+  num_hh_lactating?: number;
+  num_hh_pwd?: number;
+  pwd_types?: string[];
+  num_hh_60_above?: number;
+  num_hh_solo_parent?: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -41,6 +48,13 @@ const beneficiarySchema = new Schema<IBeneficiary>(
       enum: ["Active", "Inactive", "Not for Recording"], 
       default: "Active" 
     },
+    num_hh_0_18: { type: Number, default: 0 },
+    num_hh_pregnant: { type: Number, default: 0 },
+    num_hh_lactating: { type: Number, default: 0 },
+    num_hh_pwd: { type: Number, default: 0 },
+    pwd_types: { type: [String], default: [] },
+    num_hh_60_above: { type: Number, default: 0 },
+    num_hh_solo_parent: { type: Number, default: 0 },
   },
   { timestamps: true }
 );
