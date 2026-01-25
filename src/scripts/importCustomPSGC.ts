@@ -13,6 +13,11 @@ async function importData() {
     await connectDB();
     console.log("Connected to database:", mongoose.connection.db?.databaseName);
 
+    // 1. Wipe the Area collection to start fresh and avoid any 9-digit duplicates
+    console.log("Wiping Area collection...");
+    await Area.deleteMany({});
+    console.log("Area collection wiped.");
+
     const csvPath = path.resolve(__dirname, "../../psgc_data.csv");
     const fileContent = fs.readFileSync(csvPath, "utf-8");
     
@@ -41,14 +46,16 @@ async function importData() {
     for (let i = 1; i < lines.length; i++) {
       const parts = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(p => p.trim().replace(/"/g, ''));
       
+      const pad = (code: string) => code ? code.padStart(10, '0') : '';
+
       const regionName = parts[idxRegion];
-      const regionCode = parts[idxRegionCode];
+      const regionCode = pad(parts[idxRegionCode]);
       const provinceName = parts[idxProvince];
-      const provinceCode = parts[idxProvinceCode];
+      const provinceCode = pad(parts[idxProvinceCode]);
       const municipalityName = parts[idxMuni];
-      const municipalityCode = parts[idxMuniCode];
+      const municipalityCode = pad(parts[idxMuniCode]);
       const barangayName = parts[idxBrgy];
-      const barangayCode = parts[idxBrgyCode];
+      const barangayCode = pad(parts[idxBrgyCode]);
 
       if (regionCode && regionName) {
         regions.set(regionCode, { name: regionName, code: regionCode, type: "region" });

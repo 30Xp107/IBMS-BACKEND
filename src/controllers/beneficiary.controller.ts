@@ -1,4 +1,5 @@
 import { Request, Response, NextFunction } from "express";
+import mongoose from "mongoose";
 import { Beneficiary } from "../models/beneficiary.model";
 import { Area } from "../models/area.model";
 import ErrorHandler from "../utils/ErrorHandler";
@@ -19,14 +20,14 @@ const standardizeAreaNames = async (body: any) => {
       const val = value.trim();
       const escapedValue = val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       
-      let pattern = `^${escapedValue}$`;
+      let pattern = `^\\s*${escapedValue}\\s*$`;
       
       if (type === 'municipality') {
         const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?(\s*\(.+?\))?$/i);
         const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?(\s*\(.+?\))?$/i);
         
         const core = (cityMatch?.[2] || muniMatch?.[2] || val).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        pattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)(\\s*\\(.+?\\))?$`;
+        pattern = `^\\s*((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)(\\s*\\(.+?\\))?\\s*$`;
       }
       
       const areaRecord = await Area.findOne({
@@ -81,95 +82,94 @@ const buildBeneficiaryQuery = async (req: Request, customFilters?: any) => {
     }
   }
 
-  // Filter by redemption status or period if provided
-  if ((redemption_status && redemption_status !== "all") || (frm_period && frm_period !== "all")) {
-    let attendanceMatch: any;
-    
-    if (redemption_status && redemption_status !== "all") {
-      if (redemption_status === "present" || redemption_status === "redeemed") {
-        attendanceMatch = { $in: ["present", "redeemed", "Present", "Redeemed"] };
-      } else if (redemption_status === "absent" || redemption_status === "unredeemed") {
-        attendanceMatch = { $in: ["absent", "unredeemed", "Absent", "Unredeemed"] };
-      } else {
-        attendanceMatch = redemption_status;
+  // Filter by redemption status if provided
+  if (redemption_status && redemption_status !== "all") {
+    console.log(`Filtering by redemption_status: ${redemption_status}, frm_period: ${frm_period}`);
+    const isRedeemed = redemption_status === "redeemed" || redemption_status === "present";
+    const isAbsent = redemption_status === "unredeemed" || redemption_status === "absent";
+    const isNone = redemption_status === "none";
+
+    try {
+      // Find the IDs/HHIDs of people who match the status
+      const recordQuery: any = {};
+      if (frm_period && frm_period !== "all") {
+        const escapedPeriod = (frm_period as string).trim().replace(/[.*+?^${}()|[\\\]]/g, '\\$&');
+        recordQuery.frm_period = { $regex: new RegExp(`^\\s*${escapedPeriod}\\s*$`, "i") };
       }
-    }
+      
+      if (isRedeemed) {
+        recordQuery.attendance = { $in: ["present", "redeemed", "Present", "Redeemed"] };
+      } else if (isAbsent) {
+        recordQuery.attendance = { $in: ["absent", "unredeemed", "Absent", "Unredeemed"] };
+      }
+      
+      console.log('Record query:', JSON.stringify(recordQuery));
 
-    const redemptionQuery: any = {};
-    
-    if (frm_period && frm_period !== "all") {
-      const escapedPeriod = escapeRegex((frm_period as string).trim());
-      redemptionQuery.frm_period = { $regex: new RegExp(`^\\s*${escapedPeriod}\\s*$`, "i") };
-    }
-    
-    if (attendanceMatch) {
-      redemptionQuery.attendance = attendanceMatch;
-    }
-
-    let redemptions: any[] = [];
-    let nesRecords: any[] = [];
-
-    // Focus on specific models based on redemption_status as requested
-    if (redemption_status === "redeemed" || redemption_status === "unredeemed") {
-      redemptions = await Redemption.find(redemptionQuery).select("beneficiary_id hhid").lean();
-    } else if (redemption_status === "present" || redemption_status === "absent") {
-      nesRecords = await NES.find(redemptionQuery).select("beneficiary_id hhid").lean();
-    } else {
-      // Fallback for "all" or other statuses (like "none")
-      [redemptions, nesRecords] = await Promise.all([
-        Redemption.find(redemptionQuery).select("beneficiary_id hhid").lean(),
-        NES.find(redemptionQuery).select("beneficiary_id hhid").lean()
+      const [redemptions, nesRecords] = await Promise.all([
+        Redemption.find(recordQuery).select("beneficiary_id hhid").lean(),
+        NES.find(recordQuery).select("beneficiary_id hhid").lean()
       ]);
-    }
 
-    const matchedBenIds = new Set<string>();
-    const matchedHhids = new Set<string>();
+      console.log(`Found ${redemptions.length} redemptions and ${nesRecords.length} NES records`);
 
-    [...redemptions, ...nesRecords].forEach(r => {
-      if (r.beneficiary_id) matchedBenIds.add(r.beneficiary_id.toString());
-      if (r.hhid && r.hhid !== "0" && r.hhid !== "") matchedHhids.add(r.hhid);
-    });
+      const matchedBenIds = new Set<string>();
+      const matchedHhids = new Set<string>();
 
-    if (redemption_status === "none") {
-      const benIdObjs = Array.from(matchedBenIds).filter(id => id.length === 24).map(id => new (require('mongoose').Types.ObjectId)(id));
-      filters.push({
-        $and: [
-          { _id: { $nin: benIdObjs } },
-          { hhid: { $nin: Array.from(matchedHhids).filter(h => !!h) } }
-        ]
+      [...redemptions, ...nesRecords].forEach(r => {
+        if (r.beneficiary_id) matchedBenIds.add(r.beneficiary_id.toString());
+        if (r.hhid && r.hhid !== "0" && r.hhid !== "") matchedHhids.add(r.hhid);
       });
-    } else {
-      const benIdObjs = Array.from(matchedBenIds).filter(id => id.length === 24).map(id => new (require('mongoose').Types.ObjectId)(id));
-      filters.push({
-        $or: [
-          { _id: { $in: benIdObjs } },
-          { hhid: { $in: Array.from(matchedHhids).filter(h => !!h) } }
-        ]
-      });
+
+      const benIdObjs = Array.from(matchedBenIds).filter(id => id.length === 24).map(id => new mongoose.Types.ObjectId(id));
+      const hhidList = Array.from(matchedHhids).filter(h => !!h);
+
+      console.log(`Matched ${benIdObjs.length} beneficiary IDs and ${hhidList.length} HHIDs`);
+
+      if (isRedeemed || isAbsent) {
+        // Show people who ARE in the matched set
+        filters.push({
+          $or: [
+            { _id: { $in: benIdObjs } },
+            { hhid: { $in: hhidList } }
+          ]
+        });
+      } else if (isNone) {
+        // Show people who ARE NOT in the matched set (anyone with NO record)
+        filters.push({
+          $and: [
+            { _id: { $nin: benIdObjs } },
+            { hhid: { $nin: hhidList } }
+          ]
+        });
+      }
+    } catch (error) {
+      console.error("Error in redemption status filter:", error);
     }
   }
 
   // Add other filters
   if (barangay && barangay !== "all") {
-    const escapedValue = (barangay as string).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    query.barangay = { $regex: new RegExp(`^${escapedValue}$`, "i") };
+    const val = (barangay as string).trim();
+    const escapedValue = val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    query.barangay = { $regex: new RegExp(`^\\s*${escapedValue}\\s*$`, "i") };
   }
   if (municipality && municipality !== "all") {
     const val = (municipality as string).trim();
-    const escapedValue = val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?(\s*\(.+?\))?$/i);
     const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?(\s*\(.+?\))?$/i);
     const core = (cityMatch?.[2] || muniMatch?.[2] || val).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const pattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)(\\s*\\(.+?\\))?$`;
+    const pattern = `^\\s*((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)(\\s*\\(.+?\\))?\\s*$`;
     query.municipality = { $regex: new RegExp(pattern, "i") };
   }
   if (province && province !== "all") {
-    const escapedValue = (province as string).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    query.province = { $regex: new RegExp(`^${escapedValue}$`, "i") };
+    const val = (province as string).trim();
+    const escapedValue = val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    query.province = { $regex: new RegExp(`^\\s*${escapedValue}\\s*$`, "i") };
   }
   if (region && region !== "all") {
-    const escapedValue = (region as string).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    query.region = { $regex: new RegExp(`^${escapedValue}$`, "i") };
+    const val = (region as string).trim();
+    const escapedValue = val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    query.region = { $regex: new RegExp(`^\\s*${escapedValue}\\s*$`, "i") };
   }
   if (status && status !== "all") {
     query.status = status;
