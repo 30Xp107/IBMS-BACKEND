@@ -1,4 +1,5 @@
 import { NextFunction, Request, Response } from "express";
+import { Area } from "../models/area.model";
 import userModel from "../models/user.model";
 import {
   signAccessToken,
@@ -35,7 +36,7 @@ export const register = catchAsync(
 export const login = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const { email, password } = req.body;
-    const user = await userModel.findOne({ email }).select("+password");
+    const user = await userModel.findOne({ email }).select("+password").populate("assigned_areas", "name");
     if (!user) return next(new ErrorHandler("Account doesn't exist", 401));
     const ok = await user.comparePassword(password);
     if (!ok) return next(new ErrorHandler("Invalid Credentials", 401));
@@ -73,7 +74,9 @@ export const login = catchAsync(
         email: user.email,
         role: user.role,
         status: userStatus,
-        assigned_areas: user.assigned_areas || [],
+        assigned_areas: (user.assigned_areas || []).map((area: any) => 
+          typeof area === 'object' ? area.name : area
+        ),
       },
     });
   }

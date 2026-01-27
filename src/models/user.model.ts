@@ -41,11 +41,10 @@ const userSchema = new Schema<IUser>({
         enum: ['pending', 'approved', 'rejected'],
         default: 'pending'
     },
-    assigned_areas: {
-        type: [Schema.Types.ObjectId],
-        ref: 'Area',
-        default: []
-    }
+    assigned_areas: [{
+        type: Schema.Types.ObjectId,
+        ref: 'Area'
+    }]
 }, {timestamps: true} )
 
 userSchema.pre('save', async function(next) {
