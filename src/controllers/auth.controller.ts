@@ -257,7 +257,8 @@ export const approveUser = catchAsync(
     if (assigned_areas && Array.isArray(assigned_areas)) {
       // Filter out invalid IDs and remove duplicates
       const uniqueAreas = [...new Set(assigned_areas)]
-        .filter(areaId => areaId && typeof areaId === 'string' && areaId.match(/^[0-9a-fA-F]{24}$/));
+        .map(id => String(id))
+        .filter(areaId => areaId && areaId.match(/^[0-9a-fA-F]{24}$/));
       user.assigned_areas = uniqueAreas;
     }
     if (role) user.role = role as "user" | "admin";
