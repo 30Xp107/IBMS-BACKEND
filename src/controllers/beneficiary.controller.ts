@@ -347,7 +347,8 @@ export const getBeneficiaries = catchAsync(
                   0
                 ] 
               }
-            }
+            },
+            periods: { $addToSet: "$frm_period" }
           }
         }
       ]),
@@ -418,7 +419,8 @@ export const getBeneficiaries = catchAsync(
                   0
                 ] 
               }
-            }
+            },
+            periods: { $addToSet: "$frm_period" }
           }
         }
       ])
