@@ -7,6 +7,11 @@ dotenv.config();
 
 const ACCESS_SECRET = process.env.ACCESS_TOKEN_SECRET || "access_secret";
 
+// Simple in-memory cache for user lookups to reduce DB load
+// Key: user ID, Value: { user, timestamp }
+const userCache = new Map<string, { user: any, timestamp: number }>();
+const CACHE_TTL = 60 * 1000; // 1 minute cache
+
 export interface AuthRequest extends Request {
   user?: any;
   body: any;
@@ -24,8 +29,30 @@ export const isAuthenticated = async (
       return res
         .status(401)
         .json({ success: false, message: "Not authenticated" });
+    
     const decoded = jwt.verify(token, ACCESS_SECRET) as any;
-    const user = await userModel.findById(decoded.id).select("-password").populate("assigned_areas", "name");
+    const userId = decoded.id;
+
+    // Check cache first
+    const cached = userCache.get(userId);
+    const now = Date.now();
+    
+    let user;
+    if (cached && (now - cached.timestamp < CACHE_TTL)) {
+      user = cached.user;
+    } else {
+      user = await userModel.findById(userId).select("-password").lean();
+      if (user) {
+        userCache.set(userId, { user, timestamp: now });
+        
+        // Periodic cleanup of cache (if it grows too large)
+        if (userCache.size > 1000) {
+          const oldestKey = userCache.keys().next().value;
+          if (oldestKey) userCache.delete(oldestKey);
+        }
+      }
+    }
+
     if (!user)
       return res
         .status(401)

@@ -1,9 +1,20 @@
 import { Area } from "../models/area.model";
 
+// Simple in-memory cache for area filters
+const filterCache = new Map<string, { filter: any, timestamp: number }>();
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
 export const getAreaFilter = async (assigned_areas: any[]) => {
   try {
     if (!assigned_areas || assigned_areas.length === 0) {
       return null;
+    }
+
+    // Create a cache key from normalized area identifiers
+    const cacheKey = assigned_areas.map(a => String(a?._id || a?.id || a)).sort().join('|');
+    const cached = filterCache.get(cacheKey);
+    if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+      return cached.filter;
     }
 
     // Normalize all area references to strings (IDs, names, or codes)
@@ -59,7 +70,12 @@ export const getAreaFilter = async (assigned_areas: any[]) => {
       return condition;
     });
 
-    return orConditions.length > 0 ? { $or: orConditions } : null;
+    const finalFilter = orConditions.length > 0 ? { $or: orConditions } : null;
+    
+    // Store in cache
+    filterCache.set(cacheKey, { filter: finalFilter, timestamp: Date.now() });
+    
+    return finalFilter;
   } catch (error) {
     console.error("Error in getAreaFilter:", error);
     return null;

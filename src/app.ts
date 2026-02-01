@@ -14,6 +14,7 @@ import userRoute from './routes/user.route'
 import auditLogRoute from './routes/auditLog.route'
 import systemConfigRoute from './routes/systemConfig.route'
 import calendarEventRoute from './routes/calendarEvent.route'
+import travelOrderRoute from './routes/travelOrder.route'
 import { errorHandler } from './middleware/error'
 
 export const app = express()
@@ -47,7 +48,7 @@ app.use(cors({
     }
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'],
   exposedHeaders: ['set-cookie']
 }))
@@ -68,6 +69,7 @@ app.use('/api/users', userRoute)
 app.use('/api/audit-logs', auditLogRoute)
 app.use('/api/system-configs', systemConfigRoute)
 app.use('/api/calendar-events', calendarEventRoute)
+app.use('/api/travel-orders', travelOrderRoute)
 
 app.get('/test', (req, res) => res.json({ success: true }))
 

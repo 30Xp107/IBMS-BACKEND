@@ -75,7 +75,7 @@ export const login = catchAsync(
         role: user.role,
         status: userStatus,
         assigned_areas: (user.assigned_areas || []).map((area: any) => 
-          typeof area === 'object' ? area.name : area
+          (area && typeof area === 'object' && 'name' in area) ? area.name : String(area)
         ),
       },
     });
@@ -153,16 +153,26 @@ export const getMe = catchAsync(
     if (!user) {
       return next(new ErrorHandler("User not found", 404));
     }
+
+    // Since we removed populate from isAuthenticated middleware for performance,
+    // we populate here only when specifically requested by /me.
+    // userModel.populate works on plain objects (from .lean()) too.
+    const fullUser = await userModel.populate(user, { path: "assigned_areas", select: "name" });
+    
+    if (!fullUser) {
+      return next(new ErrorHandler("User not found", 404));
+    }
+
     res.status(200).json({
       success: true,
       user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        status: user.status,
-        assigned_areas: (user.assigned_areas || []).map((area: any) => 
-          typeof area === 'object' ? area.name : area
+        id: fullUser._id,
+        name: fullUser.name,
+        email: fullUser.email,
+        role: fullUser.role,
+        status: fullUser.status,
+        assigned_areas: (fullUser.assigned_areas || []).map((area: any) => 
+          (area && typeof area === 'object' && 'name' in area) ? area.name : String(area)
         ),
       },
     });
