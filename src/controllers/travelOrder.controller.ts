@@ -104,7 +104,7 @@ export const updateTravelOrderStatus = catchAsync(async (req: Request, res: Resp
   }
 
   // Only assigned approver can approve/reject
-  if (travelOrder.approver?.toString() !== user._id.toString() && user.role !== 'admin') {
+  if (travelOrder.approver?.toString() !== user._id.toString()) {
      return res.status(403).json({ message: "Only the assigned approver can update the status" });
   }
 
