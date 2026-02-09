@@ -151,7 +151,8 @@ const buildBeneficiaryQuery = async (req: Request, customFilters?: any) => {
   if (barangay && barangay !== "all") {
     const val = (barangay as string).trim();
     const escapedValue = val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    query.barangay = { $regex: new RegExp(`^\\s*${escapedValue}\\s*$`, "i") };
+    // Use partial match instead of strict start/end match to handle "Barangay 9 (Pob.)" vs "Barangay 9"
+    query.barangay = { $regex: new RegExp(escapedValue, "i") };
   }
   if (municipality && municipality !== "all") {
     const val = (municipality as string).trim();
