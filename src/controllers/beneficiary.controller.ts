@@ -9,6 +9,31 @@ import { getAreaFilter } from "../utils/areaFilter";
 import { normalizeArea } from "../utils/normalization";
 
 /**
+ * Checks if a beneficiary has all required data for Active status
+ */
+const calculateBeneficiaryStatus = (data: any): string => {
+  const requiredFields = [
+    'hhid',
+    'pkno',
+    'first_name',
+    'last_name',
+    'birthdate',
+    'barangay',
+    'municipality',
+    'province',
+    'region',
+    'contact'
+  ];
+
+  const hasAllFields = requiredFields.every(field => {
+    const value = data[field];
+    return value !== undefined && value !== null && String(value).trim() !== "";
+  });
+
+  return hasAllFields ? "Active" : "Pending";
+};
+
+/**
  * Standardizes area names in the request body based on the Area collection
  */
 const standardizeAreaNames = async (body: any) => {
@@ -852,6 +877,9 @@ export const createBeneficiary = catchAsync(
     // Standardize area names before saving
     await standardizeAreaNames(req.body);
 
+    // Auto-calculate status based on data completeness
+    req.body.status = calculateBeneficiaryStatus(req.body);
+
     // Auto-populate region if province is provided but region is missing
     if (req.body.province && !req.body.region) {
       if (req.body.province.toUpperCase() === "CITY OF BACOLOD") {
@@ -974,6 +1002,9 @@ export const bulkCreateBeneficiaries = catchAsync(
             b.region = provinceToRegionMap.get(provinceKey);
           }
         }
+
+        // Auto-calculate status based on data completeness
+        b.status = calculateBeneficiaryStatus(b);
 
         // Validate sync
         const doc = new Beneficiary(b);
@@ -1140,6 +1171,9 @@ export const updateBeneficiary = catchAsync(
 
     // Standardize area names before saving
     await standardizeAreaNames(req.body);
+
+    // Auto-calculate status based on updated data completeness
+    req.body.status = calculateBeneficiaryStatus({ ...beneficiary.toObject(), ...req.body });
 
     // Auto-populate region if province is changed but region is not provided or needs update
     if (req.body.province && (req.body.province !== beneficiary.province || !beneficiary.region)) {

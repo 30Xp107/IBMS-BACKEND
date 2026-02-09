@@ -50,7 +50,7 @@ const beneficiarySchema = new Schema<IBeneficiary>(
     is4ps: { type: String, default: "No" },
     status: { 
       type: String, 
-      enum: ["Active", "Inactive", "Not for Recording"], 
+      enum: ["Active", "Inactive", "Not for Recording", "Pending"], 
       default: "Active" 
     },
     num_hh_0_18: { type: Number, default: 0 },
