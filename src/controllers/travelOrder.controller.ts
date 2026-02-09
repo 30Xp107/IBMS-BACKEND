@@ -3,6 +3,7 @@ import { TravelOrder } from '../models/travelOrder.model';
 import userModel from '../models/user.model';
 import { catchAsync } from '../utils/catchAsync';
 import { Area } from '../models/area.model';
+import { SystemConfig } from '../models/systemConfig.model';
 
 // Create a new Travel Order
 export const createTravelOrder = catchAsync(async (req: Request, res: Response) => {
@@ -37,13 +38,21 @@ export const createTravelOrder = catchAsync(async (req: Request, res: Response) 
     return res.status(409).json({ message: "A similar travel order was already created recently. Please wait a moment." });
   }
 
+  // Fetch default signatory from system configuration
+  let approver = null;
+  const signatoryConfig = await SystemConfig.findOne({ key: "travel_order_signatory" });
+  if (signatoryConfig && signatoryConfig.value) {
+    approver = signatoryConfig.value;
+  }
+
   const travelOrder = await TravelOrder.create({
     requester,
     participants: participants || [], // Can be empty if just the requester
     date_from,
     date_to,
     destination,
-    purpose
+    purpose,
+    approver // Automatically assign the default signatory
   });
 
   res.status(201).json(travelOrder);
