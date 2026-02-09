@@ -19,6 +19,24 @@ export const createTravelOrder = catchAsync(async (req: Request, res: Response) 
     return res.status(400).json({ message: "Destination Region, Province and Municipality are required" });
   }
 
+  // Prevent duplicate creation (idempotency check)
+  // Check if a similar TO was created in the last 10 seconds
+  const tenSecondsAgo = new Date(Date.now() - 10000);
+  const existingTO = await TravelOrder.findOne({
+    requester,
+    purpose,
+    date_from,
+    date_to,
+    'destination.region': destination.region,
+    'destination.province': destination.province,
+    'destination.municipality': destination.municipality,
+    createdAt: { $gte: tenSecondsAgo }
+  });
+
+  if (existingTO) {
+    return res.status(409).json({ message: "A similar travel order was already created recently. Please wait a moment." });
+  }
+
   const travelOrder = await TravelOrder.create({
     requester,
     participants: participants || [], // Can be empty if just the requester
