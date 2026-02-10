@@ -27,7 +27,37 @@ const calculateBeneficiaryStatus = (data: any): string => {
 
   const hasAllFields = requiredFields.every(field => {
     const value = data[field];
-    return value !== undefined && value !== null && String(value).trim() !== "";
+    
+    // Check if value exists and is not just whitespace
+    if (value === undefined || value === null || String(value).trim() === "") {
+      return false;
+    }
+
+    const stringValue = String(value).trim();
+
+    // Specific validation for HHID
+    if (field === 'hhid' && (stringValue === '0' || stringValue === '0000000000')) {
+      return false;
+    }
+
+    // Specific validation for Birthdate
+    if (field === 'birthdate') {
+      const date = new Date(value);
+      // Check if it's a valid date and not a default "zero" date or far in the past/future
+      if (isNaN(date.getTime())) {
+        return false;
+      }
+      // Assuming birthdate shouldn't be today or in the future
+      if (date >= new Date()) {
+        return false;
+      }
+      // Check for common placeholder dates like 1900-01-01 if necessary
+      if (date.getFullYear() <= 1900) {
+        return false;
+      }
+    }
+
+    return true;
   });
 
   return hasAllFields ? "Active" : "Pending";
@@ -1312,6 +1342,29 @@ export const getAvailableFilters = catchAsync(
       municipalities: normalizeList(municipalities),
       barangays: normalizeList(barangays),
       periods: periods
+    });
+  }
+);
+
+export const recalculateAllStatuses = catchAsync(
+  async (req: Request, res: Response) => {
+    const beneficiaries = await Beneficiary.find({});
+    let updates = 0;
+
+    for (const b of beneficiaries) {
+      const newStatus = calculateBeneficiaryStatus(b);
+      if (newStatus !== b.status) {
+        b.status = newStatus;
+        await b.save();
+        updates++;
+      }
+    }
+
+    await logAudit(req, "MAINTENANCE", "system", "all", "", `Recalculated beneficiary statuses: ${updates} updated`);
+
+    res.status(200).json({
+      message: "Recalculation complete",
+      updated_count: updates
     });
   }
 );
