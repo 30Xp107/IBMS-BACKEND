@@ -27,7 +27,7 @@ const calculateBeneficiaryStatus = (data: any): string => {
 
   const hasAllFields = requiredFields.every(field => {
     const value = data[field];
-    
+
     // Check if value exists and is not just whitespace
     if (value === undefined || value === null || String(value).trim() === "") {
       return false;
@@ -60,7 +60,7 @@ const calculateBeneficiaryStatus = (data: any): string => {
     return true;
   });
 
-  return hasAllFields ? "Active" : "Pending";
+  return hasAllFields ? "Active" : "Incomplete";
 };
 
 /**
@@ -68,28 +68,28 @@ const calculateBeneficiaryStatus = (data: any): string => {
  */
 const standardizeAreaNames = async (body: any) => {
   const types = ['region', 'province', 'municipality', 'barangay'];
-  
+
   for (const type of types) {
     const value = body[type];
     if (value && typeof value === 'string' && value.toLowerCase() !== 'all') {
       const val = value.trim();
       const escapedValue = val.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      
+
       let pattern = `^\\s*${escapedValue}\\s*$`;
-      
+
       if (type === 'municipality') {
         const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?(\s*\(.+?\))?$/i);
         const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?(\s*\(.+?\))?$/i);
-        
+
         const core = (cityMatch?.[2] || muniMatch?.[2] || val).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         pattern = `^\\s*((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)(\\s*\\(.+?\\))?\\s*$`;
       }
-      
+
       const areaRecord = await Area.findOne({
         type: type as any,
         name: { $regex: new RegExp(pattern, "i") }
       });
-      
+
       if (areaRecord) {
         body[type] = areaRecord.name;
       } else {
@@ -109,13 +109,13 @@ import { NES } from "../models/nes.model";
 
 const buildBeneficiaryQuery = async (req: Request, customFilters?: any) => {
   const user = (req as any).user;
-  const { 
-    barangay, 
-    municipality, 
-    province, 
-    region, 
-    status, 
-    search, 
+  const {
+    barangay,
+    municipality,
+    province,
+    region,
+    status,
+    search,
     redemption_status,
     frm_period,
     is4ps
@@ -151,13 +151,13 @@ const buildBeneficiaryQuery = async (req: Request, customFilters?: any) => {
         const escapedPeriod = (frm_period as string).trim().replace(/[.*+?^${}()|[\\\]]/g, '\\$&');
         recordQuery.frm_period = { $regex: new RegExp(`^\\s*${escapedPeriod}\\s*$`, "i") };
       }
-      
+
       if (isRedeemed) {
         recordQuery.attendance = { $in: ["present", "redeemed", "Present", "Redeemed"] };
       } else if (isAbsent) {
         recordQuery.attendance = { $in: ["absent", "unredeemed", "Absent", "Unredeemed"] };
       }
-      
+
       console.log('Record query:', JSON.stringify(recordQuery));
 
       const [redemptions, nesRecords] = await Promise.all([
@@ -252,10 +252,10 @@ const buildBeneficiaryQuery = async (req: Request, customFilters?: any) => {
 
 export const getBeneficiaries = catchAsync(
   async (req: Request, res: Response) => {
-    const { 
-      page = 1, 
-      limit = 10, 
-      sort = "createdAt", 
+    const {
+      page = 1,
+      limit = 10,
+      sort = "createdAt",
       order = "desc",
       frm_period
     } = req.query;
@@ -266,7 +266,7 @@ export const getBeneficiaries = catchAsync(
     let sortField = sort as string;
     const sortOrder = order === "asc" ? 1 : -1;
     const sortObj: any = {};
-    
+
     // Add secondary sort for stability
     if (sortField === "hhid") {
       sortObj["hhid"] = sortOrder;
@@ -337,14 +337,14 @@ export const getBeneficiaries = catchAsync(
 
     const [redemptionStats, nesStats] = await Promise.all([
       Redemption.aggregate([
-        { 
-          $match: { 
+        {
+          $match: {
             $or: [
               { beneficiary_id: { $in: beneficiaryIds } },
               { beneficiary_id: { $in: beneficiaryIdObjs } },
               { hhid: { $in: hhids } }
             ]
-          } 
+          }
         },
         // Join with beneficiaries to ensure we group by the correct canonical ID
         {
@@ -358,7 +358,7 @@ export const getBeneficiaries = catchAsync(
                     $or: [
                       { $eq: ["$_id", "$$b_id"] },
                       { $eq: [{ $toString: "$_id" }, { $toString: "$$b_id" }] },
-                      { 
+                      {
                         $and: [
                           { $ne: ["$$h_id", ""] },
                           { $ne: ["$$h_id", null] },
@@ -370,8 +370,8 @@ export const getBeneficiaries = catchAsync(
                   }
                 }
               },
-               { $project: { _id: 1 } },
-               { $limit: 1 }
+              { $project: { _id: 1 } },
+              { $limit: 1 }
             ],
             as: "matched_ben"
           }
@@ -381,27 +381,31 @@ export const getBeneficiaries = catchAsync(
           $group: {
             _id: { $toString: "$matched_ben._id" },
             redeemed: {
-              $sum: { 
+              $sum: {
                 $cond: [
-                  { $or: [
-                    { $eq: ["$attendance", "present"] },
-                    { $eq: ["$attendance", "redeemed"] }
-                  ]}, 
-                  1, 
+                  {
+                    $or: [
+                      { $eq: ["$attendance", "present"] },
+                      { $eq: ["$attendance", "redeemed"] }
+                    ]
+                  },
+                  1,
                   0
-                ] 
+                ]
               }
             },
             unredeemed: {
-              $sum: { 
+              $sum: {
                 $cond: [
-                  { $or: [
-                    { $eq: ["$attendance", "absent"] },
-                    { $eq: ["$attendance", "unredeemed"] }
-                  ]}, 
-                  1, 
+                  {
+                    $or: [
+                      { $eq: ["$attendance", "absent"] },
+                      { $eq: ["$attendance", "unredeemed"] }
+                    ]
+                  },
+                  1,
                   0
-                ] 
+                ]
               }
             },
             periods: { $addToSet: "$frm_period" }
@@ -409,14 +413,14 @@ export const getBeneficiaries = catchAsync(
         }
       ]),
       NES.aggregate([
-        { 
-          $match: { 
+        {
+          $match: {
             $or: [
               { beneficiary_id: { $in: beneficiaryIds } },
               { beneficiary_id: { $in: beneficiaryIdObjs } },
               { hhid: { $in: hhids } }
             ]
-          } 
+          }
         },
         // Join with beneficiaries to ensure we group by the correct canonical ID
         {
@@ -430,7 +434,7 @@ export const getBeneficiaries = catchAsync(
                     $or: [
                       { $eq: ["$_id", "$$b_id"] },
                       { $eq: [{ $toString: "$_id" }, { $toString: "$$b_id" }] },
-                      { 
+                      {
                         $and: [
                           { $ne: ["$$h_id", ""] },
                           { $ne: ["$$h_id", null] },
@@ -442,8 +446,8 @@ export const getBeneficiaries = catchAsync(
                   }
                 }
               },
-               { $project: { _id: 1 } },
-               { $limit: 1 }
+              { $project: { _id: 1 } },
+              { $limit: 1 }
             ],
             as: "matched_ben"
           }
@@ -453,27 +457,31 @@ export const getBeneficiaries = catchAsync(
           $group: {
             _id: { $toString: "$matched_ben._id" },
             present: {
-              $sum: { 
+              $sum: {
                 $cond: [
-                  { $or: [
-                    { $eq: ["$attendance", "present"] },
-                    { $eq: ["$attendance", "redeemed"] }
-                  ]}, 
-                  1, 
+                  {
+                    $or: [
+                      { $eq: ["$attendance", "present"] },
+                      { $eq: ["$attendance", "redeemed"] }
+                    ]
+                  },
+                  1,
                   0
-                ] 
+                ]
               }
             },
             absent: {
-              $sum: { 
+              $sum: {
                 $cond: [
-                  { $or: [
-                    { $eq: ["$attendance", "absent"] },
-                    { $eq: ["$attendance", "unredeemed"] }
-                  ]}, 
-                  1, 
+                  {
+                    $or: [
+                      { $eq: ["$attendance", "absent"] },
+                      { $eq: ["$attendance", "unredeemed"] }
+                    ]
+                  },
+                  1,
                   0
-                ] 
+                ]
               }
             },
             periods: { $addToSet: "$frm_period" }
@@ -500,14 +508,14 @@ export const getBeneficiaries = catchAsync(
     const beneficiariesWithStats = beneficiaries.map(b => {
       const id = b._id.toString();
       const hhid = b.hhid;
-      
+
       // Find redemption for this period (prefer ID match over HHID match)
       // Only match by HHID if it's not a placeholder like "0"
       const hhidMatch = (hhid && hhid !== "0" && hhid !== "") ? periodRedemptionMap.get(hhid) : null;
       const current_redemption = periodRedemptionMap.get(id) || hhidMatch;
 
       const benObj = b.toObject();
-      
+
       // Normalize area names in the response
       benObj.region = normalizeArea(benObj.region);
       benObj.province = normalizeArea(benObj.province);
@@ -533,8 +541,8 @@ export const getBeneficiaries = catchAsync(
 
 export const getExportData = catchAsync(
   async (req: Request, res: Response) => {
-    const { 
-      sort = "last_name", 
+    const {
+      sort = "last_name",
       order = "asc",
       frm_period
     } = req.query;
@@ -550,7 +558,7 @@ export const getExportData = catchAsync(
 
     // Fetch all beneficiaries matching the query
     const beneficiaries = await Beneficiary.find(query).sort(sortObj);
-    
+
     if (beneficiaries.length === 0) {
       return res.status(200).json({ data: [] });
     }
@@ -596,14 +604,14 @@ export const getExportData = catchAsync(
     // Aggregate stats for ALL time (for percentages)
     const [redemptionStats, nesStats] = await Promise.all([
       Redemption.aggregate([
-        { 
-          $match: { 
+        {
+          $match: {
             $or: [
               { beneficiary_id: { $in: beneficiaryIds } },
               { beneficiary_id: { $in: beneficiaryIdObjs } },
               { hhid: { $in: hhids } }
             ]
-          } 
+          }
         },
         {
           $lookup: {
@@ -616,7 +624,7 @@ export const getExportData = catchAsync(
                     $or: [
                       { $eq: ["$_id", "$$b_id"] },
                       { $eq: [{ $toString: "$_id" }, { $toString: "$$b_id" }] },
-                      { 
+                      {
                         $and: [
                           { $ne: ["$$h_id", ""] },
                           { $ne: ["$$h_id", null] },
@@ -628,8 +636,8 @@ export const getExportData = catchAsync(
                   }
                 }
               },
-               { $project: { _id: 1 } },
-               { $limit: 1 }
+              { $project: { _id: 1 } },
+              { $limit: 1 }
             ],
             as: "matched_ben"
           }
@@ -639,41 +647,45 @@ export const getExportData = catchAsync(
           $group: {
             _id: { $toString: "$matched_ben._id" },
             redeemed: {
-              $sum: { 
+              $sum: {
                 $cond: [
-                  { $or: [
-                    { $eq: ["$attendance", "present"] },
-                    { $eq: ["$attendance", "redeemed"] }
-                  ]}, 
-                  1, 
+                  {
+                    $or: [
+                      { $eq: ["$attendance", "present"] },
+                      { $eq: ["$attendance", "redeemed"] }
+                    ]
+                  },
+                  1,
                   0
-                ] 
+                ]
               }
             },
             unredeemed: {
-              $sum: { 
+              $sum: {
                 $cond: [
-                  { $or: [
-                    { $eq: ["$attendance", "absent"] },
-                    { $eq: ["$attendance", "unredeemed"] }
-                  ]}, 
-                  1, 
+                  {
+                    $or: [
+                      { $eq: ["$attendance", "absent"] },
+                      { $eq: ["$attendance", "unredeemed"] }
+                    ]
+                  },
+                  1,
                   0
-                ] 
+                ]
               }
             }
           }
         }
       ]),
       NES.aggregate([
-        { 
-          $match: { 
+        {
+          $match: {
             $or: [
               { beneficiary_id: { $in: beneficiaryIds } },
               { beneficiary_id: { $in: beneficiaryIdObjs } },
               { hhid: { $in: hhids } }
             ]
-          } 
+          }
         },
         {
           $lookup: {
@@ -686,7 +698,7 @@ export const getExportData = catchAsync(
                     $or: [
                       { $eq: ["$_id", "$$b_id"] },
                       { $eq: [{ $toString: "$_id" }, { $toString: "$$b_id" }] },
-                      { 
+                      {
                         $and: [
                           { $ne: ["$$h_id", ""] },
                           { $ne: ["$$h_id", null] },
@@ -698,8 +710,8 @@ export const getExportData = catchAsync(
                   }
                 }
               },
-               { $project: { _id: 1 } },
-               { $limit: 1 }
+              { $project: { _id: 1 } },
+              { $limit: 1 }
             ],
             as: "matched_ben"
           }
@@ -709,27 +721,31 @@ export const getExportData = catchAsync(
           $group: {
             _id: { $toString: "$matched_ben._id" },
             present: {
-              $sum: { 
+              $sum: {
                 $cond: [
-                  { $or: [
-                    { $eq: ["$attendance", "present"] },
-                    { $eq: ["$attendance", "redeemed"] }
-                  ]}, 
-                  1, 
+                  {
+                    $or: [
+                      { $eq: ["$attendance", "present"] },
+                      { $eq: ["$attendance", "redeemed"] }
+                    ]
+                  },
+                  1,
                   0
-                ] 
+                ]
               }
             },
             absent: {
-              $sum: { 
+              $sum: {
                 $cond: [
-                  { $or: [
-                    { $eq: ["$attendance", "absent"] },
-                    { $eq: ["$attendance", "unredeemed"] }
-                  ]}, 
-                  1, 
+                  {
+                    $or: [
+                      { $eq: ["$attendance", "absent"] },
+                      { $eq: ["$attendance", "unredeemed"] }
+                    ]
+                  },
+                  1,
                   0
-                ] 
+                ]
               }
             }
           }
@@ -755,13 +771,13 @@ export const getExportData = catchAsync(
     const exportData = beneficiaries.map(b => {
       const id = b._id.toString();
       const hhid = b.hhid;
-      
+
       const redStat = redemptionMap.get(id) || { redeemed: 0, unredeemed: 0 };
       const nesStat = nesMap.get(id) || { present: 0, absent: 0 };
-      
+
       const redTotal = redStat.redeemed + redStat.unredeemed;
       const nesTotal = nesStat.present + nesStat.absent;
-      
+
       const redemptionRate = redTotal > 0 ? (redStat.redeemed / redTotal) * 100 : 0;
       const nesRate = nesTotal > 0 ? (nesStat.present / nesTotal) * 100 : 0;
 
@@ -807,11 +823,11 @@ export const normalizeAllAreaNames = catchAsync(
   async (req: Request, res: Response) => {
     const beneficiaries = await Beneficiary.find({});
     let bUpdates = 0;
-    
+
     for (const b of beneficiaries) {
       let changed = false;
       const fields = ['region', 'province', 'municipality', 'barangay'] as const;
-      
+
       for (const field of fields) {
         if (b[field]) {
           const normalized = normalizeArea(b[field]);
@@ -915,11 +931,11 @@ export const createBeneficiary = catchAsync(
       if (req.body.province.toUpperCase() === "CITY OF BACOLOD") {
         req.body.region = "NEGROS ISLAND REGION (NIR)";
       } else {
-        const provinceArea = await Area.findOne({ 
-          name: { $regex: new RegExp(`^${(req.body.province as string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") }, 
-          type: "province" 
+        const provinceArea = await Area.findOne({
+          name: { $regex: new RegExp(`^${(req.body.province as string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
+          type: "province"
         }).populate("parent_id");
-        
+
         if (provinceArea && provinceArea.parent_id && (provinceArea.parent_id as any).name) {
           req.body.region = (provinceArea.parent_id as any).name;
         } else if (provinceArea && provinceArea.parent_code) {
@@ -951,17 +967,17 @@ export const bulkCreateBeneficiaries = catchAsync(
     // Split into chunks for better performance and to avoid memory issues
     // Reduced chunk size to 500 to avoid connection timeouts during large imports
     const chunkSize = 500;
-    
+
     // Pre-fetch all provinces and regions to avoid thousands of DB queries
     const allProvinces = await Area.find({ type: "province" }).populate("parent_id");
     const provinceToRegionMap = new Map<string, string>();
     const provinceStandardMap = new Map<string, string>();
-    
+
     allProvinces.forEach((p: any) => {
       const canonicalName = p.name;
       const provinceName = p.name.toUpperCase();
       provinceStandardMap.set(provinceName, canonicalName);
-      
+
       let regionName = "";
       if (p.parent_id && p.parent_id.name) {
         regionName = p.parent_id.name;
@@ -974,15 +990,15 @@ export const bulkCreateBeneficiaries = catchAsync(
     // Pre-fetch all municipalities for standardization
     const allMunicipalities = await Area.find({ type: "municipality" });
     const muniMap = new Map<string, string>();
-    
+
     allMunicipalities.forEach((m: any) => {
       const canonicalName = m.name;
       const val = m.name.trim();
       muniMap.set(val.toUpperCase(), canonicalName);
-      
+
       const cityMatch = val.match(/^(city of\s+)?(.+?)(\s+city)?(\s*\(.+?\))?$/i);
       const muniMatch = val.match(/^(municipality of\s+)?(.+?)(\s+municipality)?(\s*\(.+?\))?$/i);
-      
+
       if (cityMatch && cityMatch[2]) {
         const core = cityMatch[2].toUpperCase();
         muniMap.set(core, canonicalName);
@@ -998,17 +1014,17 @@ export const bulkCreateBeneficiaries = catchAsync(
 
     // Proactively drop old HHID unique index if it exists (ignoring errors if it doesn't)
     // This ensures we don't have stray restrictions from previous versions
-    await Beneficiary.collection.dropIndex("hhid_1").catch(() => {});
+    await Beneficiary.collection.dropIndex("hhid_1").catch(() => { });
 
     for (let i = 0; i < beneficiaries.length; i += chunkSize) {
       const chunk = beneficiaries.slice(i, i + chunkSize);
-      
+
       // 1. Auto-populate missing regions & Validate each document
       const validDocs: any[] = [];
-      
+
       for (let j = 0; j < chunk.length; j++) {
         const b = chunk[j];
-        
+
         // Standardize municipality
         if (b.municipality) {
           const muniKey = b.municipality.trim().toUpperCase();
@@ -1039,7 +1055,7 @@ export const bulkCreateBeneficiaries = catchAsync(
         // Validate sync
         const doc = new Beneficiary(b);
         const validationError = doc.validateSync();
-        
+
         if (validationError) {
           results.failed++;
           if (results.errors.length < 50) {
@@ -1050,7 +1066,7 @@ export const bulkCreateBeneficiaries = catchAsync(
           validDocs.push(b);
         }
       }
-      
+
       if (validDocs.length === 0) continue;
 
       const bulkOps = validDocs.map(b => {
@@ -1118,19 +1134,19 @@ export const checkDuplicates = catchAsync(
 
     const duplicates: any[] = [];
     const chunkSize = 50; // Much smaller chunk size for complex $or query with regex to avoid timeouts
-    
+
     for (let i = 0; i < beneficiaries.length; i += chunkSize) {
       const chunk = beneficiaries.slice(i, i + chunkSize);
-      
+
       const query = {
         $or: chunk.map(b => {
-           const muniVal = (b.municipality || '').trim();
-           const cityMatch = muniVal.match(/^(city of\s+)?(.+?)(\s+city)?(\s*\(.+?\))?$/i);
-           const muniMatch = muniVal.match(/^(municipality of\s+)?(.+?)(\s+municipality)?(\s*\(.+?\))?$/i);
-           const core = (cityMatch?.[2] || muniMatch?.[2] || muniVal).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-           const muniPattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)(\\s*\\(.+?\\))?$`;
+          const muniVal = (b.municipality || '').trim();
+          const cityMatch = muniVal.match(/^(city of\s+)?(.+?)(\s+city)?(\s*\(.+?\))?$/i);
+          const muniMatch = muniVal.match(/^(municipality of\s+)?(.+?)(\s+municipality)?(\s*\(.+?\))?$/i);
+          const core = (cityMatch?.[2] || muniMatch?.[2] || muniVal).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+          const muniPattern = `^((city of\\s+)?${core}(\\s+city)?|(municipality of\\s+)?${core}(\\s+municipality)?)(\\s*\\(.+?\\))?$`;
 
-           return {
+          return {
             first_name: { $regex: new RegExp(`^${(b.first_name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
             last_name: { $regex: new RegExp(`^${(b.last_name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
             middle_name: { $regex: new RegExp(`^${(b.middle_name || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
@@ -1155,7 +1171,7 @@ export const checkDuplicates = catchAsync(
 export const updateBeneficiary = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const user = (req as any).user;
-    
+
     const query: any = { _id: req.params.id };
     if (user.role !== "admin") {
       const areaFilter = await getAreaFilter(user.assigned_areas);
@@ -1183,7 +1199,7 @@ export const updateBeneficiary = catchAsync(
       });
 
       const updatedData = { ...beneficiary.toObject(), ...req.body };
-      
+
       const isMatch = assignedAreas.some(area => {
         const escapedName = area.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
         const regex = new RegExp(`^${escapedName}$`, "i");
@@ -1210,11 +1226,11 @@ export const updateBeneficiary = catchAsync(
       if (req.body.province.toUpperCase() === "CITY OF BACOLOD") {
         req.body.region = "NEGROS ISLAND REGION (NIR)";
       } else {
-        const provinceArea = await Area.findOne({ 
-          name: { $regex: new RegExp(`^${(req.body.province as string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") }, 
-          type: "province" 
+        const provinceArea = await Area.findOne({
+          name: { $regex: new RegExp(`^${(req.body.province as string).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, "i") },
+          type: "province"
         }).populate("parent_id");
-        
+
         if (provinceArea && provinceArea.parent_id && (provinceArea.parent_id as any).name) {
           req.body.region = (provinceArea.parent_id as any).name;
         } else if (provinceArea && provinceArea.parent_code) {
@@ -1236,7 +1252,7 @@ export const updateBeneficiary = catchAsync(
 export const deleteBeneficiary = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const user = (req as any).user;
-    
+
     const query: any = { _id: req.params.id };
     if (user.role !== "admin") {
       const areaFilter = await getAreaFilter(user.assigned_areas);

@@ -12,7 +12,7 @@ export const getAreas = catchAsync(
     const query: any = {};
     if (type) query.type = (type as string).toLowerCase();
     if (code) query.code = code;
-    
+
     // Handle parent filtering more robustly
     if (parent_id || parent_code) {
       const parentConditions: any[] = [];
@@ -22,13 +22,13 @@ export const getAreas = catchAsync(
       } else if (parent_id) {
         parentConditions.push({ parent_id });
       }
-      
+
       if (parentConditions.length > 0) {
         query.$and = query.$and || [];
         query.$and.push({ $or: parentConditions });
       }
     }
-    
+
     if (search) {
       const searchCondition = {
         $or: [
@@ -98,7 +98,7 @@ export const createArea = catchAsync(
     if (req.body.parent_id === "" || req.body.parent_id === "null" || !req.body.parent_id) {
       req.body.parent_id = null;
     }
-    
+
     // Normalize area name
     if (req.body.name) {
       req.body.name = normalizeArea(req.body.name);

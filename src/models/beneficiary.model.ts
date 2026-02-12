@@ -48,21 +48,21 @@ const beneficiarySchema = new Schema<IBeneficiary>(
     region: { type: String, default: "" },
     contact: { type: String, default: "" },
     is4ps: { type: String, default: "No" },
-    status: { 
-      type: String, 
-      enum: ["Active", "Inactive", "Not for Recording", "Pending"], 
-      default: "Active" 
+    status: {
+      type: String,
+      enum: ["Active", "Inactive", "Not for Recording", "Pending", "Incomplete"],
+      default: "Active"
     },
     num_hh_0_18: { type: Number, default: 0 },
     num_hh_pregnant: { type: Number, default: 0 },
     num_hh_lactating: { type: Number, default: 0 },
     num_hh_pwd: { type: Number, default: 0 },
-    pwd_types: { 
+    pwd_types: {
       type: [{
         type: { type: String },
         count: { type: Number, default: 1 }
-      }], 
-      default: [] 
+      }],
+      default: []
     },
     num_hh_60_above: { type: Number, default: 0 },
     num_hh_solo_parent: { type: Number, default: 0 },
@@ -71,14 +71,14 @@ const beneficiarySchema = new Schema<IBeneficiary>(
 );
 
 // Add indexes for performance
-beneficiarySchema.index({ 
-  first_name: 1, 
-  last_name: 1, 
-  middle_name: 1, 
-  birthdate: 1, 
-  barangay: 1, 
-  municipality: 1, 
-  province: 1 
+beneficiarySchema.index({
+  first_name: 1,
+  last_name: 1,
+  middle_name: 1,
+  birthdate: 1,
+  barangay: 1,
+  municipality: 1,
+  province: 1
 }, { unique: true });
 beneficiarySchema.index({ first_name: 1, last_name: 1 });
 beneficiarySchema.index({ hhid: 1 });
