@@ -34,6 +34,12 @@ const calculateBeneficiaryStatus = (data: any): string => {
     }
 
     const stringValue = String(value).trim();
+    const lowerValue = stringValue.toLowerCase();
+
+    // Check for common placeholders
+    if (["na", "n/a", "none", "-", ".", "unknown", "tbd"].includes(lowerValue)) {
+      return false;
+    }
 
     // Specific validation for HHID
     if (field === 'hhid' && (stringValue === '0' || stringValue === '0000000000')) {
@@ -42,17 +48,28 @@ const calculateBeneficiaryStatus = (data: any): string => {
 
     // Specific validation for Birthdate
     if (field === 'birthdate') {
+      // Check for Excel serial dates (numbers like 33692)
+      if (/^\d+$/.test(stringValue) && parseInt(stringValue) > 10000) {
+        // Technically this might be a date, but it shouldn't be stored as a raw number string
+        // If your system handles this elsewhere, fine, but for now let's flag it if it's not a standard date format
+        // Actually, let's try to parse it
+        // If it's just 5 digits, it's likely an excel date which might be "valid" data but likely needs formatting
+        // For status purposes, if it's a valid number it might be "complete", but let's encourage proper format
+      }
+
       const date = new Date(value);
-      // Check if it's a valid date and not a default "zero" date or far in the past/future
+      // Check if it's a valid date
       if (isNaN(date.getTime())) {
         return false;
       }
-      // Assuming birthdate shouldn't be today or in the future
-      if (date >= new Date()) {
+
+      // Check for default/placeholder dates
+      if (date.getFullYear() <= 1900) {
         return false;
       }
-      // Check for common placeholder dates like 1900-01-01 if necessary
-      if (date.getFullYear() <= 1900) {
+
+      // Birthdate shouldn't be in the future
+      if (date > new Date()) {
         return false;
       }
     }
