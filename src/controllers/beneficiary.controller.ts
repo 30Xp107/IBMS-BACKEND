@@ -1381,22 +1381,52 @@ export const getAvailableFilters = catchAsync(
 
 export const recalculateAllStatuses = catchAsync(
   async (req: Request, res: Response) => {
-    const beneficiaries = await Beneficiary.find({});
-    let updates = 0;
+    // 1. Send response immediately to avoid timeout (since this is a long running background task)
+    // Note: In a real production app, we'd use a background job queue (e.g., BullMQ)
+    // For now, we'll process in chunks but we need to keep the connection alive or return early.
+    // Given the 502, the proxy is killing the connection.
+    // Let's try processing in optimized batches first. 
 
-    for (const b of beneficiaries) {
+    const BATCH_SIZE = 1000;
+    let processed = 0;
+    let updates = 0;
+    const bulkOps = [];
+
+    const cursor = Beneficiary.find({}).cursor();
+
+    for (let doc = await cursor.next(); doc != null; doc = await cursor.next()) {
+      const b = doc.toObject(); // working with plain object for calculation is faster
       const newStatus = calculateBeneficiaryStatus(b);
+
       if (newStatus !== b.status) {
-        b.status = newStatus;
-        await b.save();
+        bulkOps.push({
+          updateOne: {
+            filter: { _id: b._id },
+            update: { $set: { status: newStatus } }
+          }
+        });
         updates++;
+      }
+
+      processed++;
+
+      if (bulkOps.length >= BATCH_SIZE) {
+        await Beneficiary.bulkWrite(bulkOps);
+        bulkOps.length = 0; // Clear array
+        // Optional: Introduce a small delay if CPU usage is too high, but usually not needed for 46k
       }
     }
 
-    await logAudit(req, "MAINTENANCE", "system", "all", "", `Recalculated beneficiary statuses: ${updates} updated`);
+    // Process remaining ops
+    if (bulkOps.length > 0) {
+      await Beneficiary.bulkWrite(bulkOps);
+    }
+
+    await logAudit(req, "MAINTENANCE", "system", "all", "", `Recalculated beneficiary statuses: ${updates} updated out of ${processed} processed`);
 
     res.status(200).json({
       message: "Recalculation complete",
+      processed_count: processed,
       updated_count: updates
     });
   }
