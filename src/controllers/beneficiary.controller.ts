@@ -1381,54 +1381,69 @@ export const getAvailableFilters = catchAsync(
 
 export const recalculateAllStatuses = catchAsync(
   async (req: Request, res: Response) => {
-    // 1. Send response immediately to avoid timeout (since this is a long running background task)
-    // Note: In a real production app, we'd use a background job queue (e.g., BullMQ)
-    // For now, we'll process in chunks but we need to keep the connection alive or return early.
-    // Given the 502, the proxy is killing the connection.
-    // Let's try processing in optimized batches first. 
-
-    const BATCH_SIZE = 1000;
-    let processed = 0;
-    let updates = 0;
-    const bulkOps = [];
-
-    const cursor = Beneficiary.find({}).cursor();
-
-    for (let doc = await cursor.next(); doc != null; doc = await cursor.next()) {
-      const b = doc.toObject(); // working with plain object for calculation is faster
-      const newStatus = calculateBeneficiaryStatus(b);
-
-      if (newStatus !== b.status) {
-        bulkOps.push({
-          updateOne: {
-            filter: { _id: b._id },
-            update: { $set: { status: newStatus } }
-          }
-        });
-        updates++;
-      }
-
-      processed++;
-
-      if (bulkOps.length >= BATCH_SIZE) {
-        await Beneficiary.bulkWrite(bulkOps);
-        bulkOps.length = 0; // Clear array
-        // Optional: Introduce a small delay if CPU usage is too high, but usually not needed for 46k
-      }
-    }
-
-    // Process remaining ops
-    if (bulkOps.length > 0) {
-      await Beneficiary.bulkWrite(bulkOps);
-    }
-
-    await logAudit(req, "MAINTENANCE", "system", "all", "", `Recalculated beneficiary statuses: ${updates} updated out of ${processed} processed`);
-
-    res.status(200).json({
-      message: "Recalculation complete",
-      processed_count: processed,
-      updated_count: updates
+    // Send response immediately to avoid timeout
+    res.status(202).json({
+      message: "Recalculation process started in the background. This will take some time for 46k+ records. Please check back in a few minutes.",
+      status: "processing"
     });
+
+    // Run the actual work in the background
+    const runBackgroundRecalculation = async () => {
+      try {
+        console.log("Starting background status recalculation...");
+        const BATCH_SIZE = 1000;
+        let processed = 0;
+        let updates = 0;
+        let bulkOps: any[] = [];
+
+        const cursor = Beneficiary.find({}).cursor();
+
+        for (let doc = await cursor.next(); doc != null; doc = await cursor.next()) {
+          const b = doc.toObject();
+          const newStatus = calculateBeneficiaryStatus(b);
+
+          if (newStatus !== b.status) {
+            bulkOps.push({
+              updateOne: {
+                filter: { _id: b._id },
+                update: { $set: { status: newStatus } }
+              }
+            });
+            updates++;
+          }
+
+          processed++;
+
+          if (bulkOps.length >= BATCH_SIZE) {
+            await Beneficiary.bulkWrite(bulkOps);
+            bulkOps = [];
+            // Small pause to yield to other processes if needed, 
+            // but for 46k it's usually fine to keep going
+          }
+        }
+
+        if (bulkOps.length > 0) {
+          await Beneficiary.bulkWrite(bulkOps);
+        }
+
+        console.log(`Background recalculation finished: ${updates} updated out of ${processed} processed`);
+        
+        // Log a system audit entry manually since we're in background
+        // We need a dummy req-like object for logAudit if it uses req.user
+        const dummyReq = {
+          user: (req as any).user,
+          ip: req.ip,
+          headers: req.headers
+        } as any;
+        
+        await logAudit(dummyReq, "MAINTENANCE", "system", "all", "", `Background status recalculation complete: ${updates} updated out of ${processed} processed`);
+      } catch (error) {
+        console.error("Error in background status recalculation:", error);
+      }
+    };
+
+    // Trigger background process
+    runBackgroundRecalculation();
   }
 );
 
