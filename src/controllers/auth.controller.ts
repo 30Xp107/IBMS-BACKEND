@@ -17,13 +17,13 @@ dotenv.config();
 
 export const register = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
-    const { name, email, password } = req.body;
+    const { idNumber, name, email, password } = req.body;
     const existing = await userModel.findOne({ email });
     if (existing) return next(new ErrorHandler("Email Already Used", 400)); 
     // Create user with default status "pending" - they cannot login until approved
-    const user = await userModel.create({ name, email, password });
+    const user = await userModel.create({ idNumber, name, email, password });
 
-    await logAudit(req, "CREATE", "users", user.id, "", JSON.stringify({ name, email }));
+    await logAudit(req, "CREATE", "users", user.id, "", JSON.stringify({ idNumber, name, email }));
 
     // Don't log them in - they need admin approval first
     res.status(201).json({
@@ -70,6 +70,7 @@ export const login = catchAsync(
       success: true,
       user: {
         id: user._id,
+        idNumber: user.idNumber,
         name: user.name,
         email: user.email,
         role: user.role,
@@ -105,12 +106,13 @@ export const refreshToken = catchAsync(async (req: Request, res: Response) => {
 export const updateUser = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const { id } = req.params;
-    const { name, email, password, role } = req.body;
+    const { idNumber, name, email, password, role } = req.body;
     const user = await userModel.findById(id);
 
     if (!user) return next(new ErrorHandler("User not found", 404));
 
     const oldData = JSON.stringify({
+      idNumber: user.idNumber,
       name: user.name,
       email: user.email,
       role: user.role,
@@ -126,6 +128,7 @@ export const updateUser = catchAsync(
       user.email = email;
     }
 
+    if (idNumber) user.idNumber = idNumber;
     if (name) user.name = name;
     if (password) user.password = password;
     if (role) user.role = role as "user" | "admin";
@@ -167,6 +170,7 @@ export const getMe = catchAsync(
       success: true,
       user: {
         id: fullUser._id,
+        idNumber: fullUser.idNumber,
         name: fullUser.name,
         email: fullUser.email,
         role: fullUser.role,
@@ -203,6 +207,7 @@ export const getuser = catchAsync(
     sortObj["_id"] = -1; // Final fallback for absolute stability
     if (search) {
       query.$or = [
+        { idNumber: { $regex: search as string, $options: "i" } },
         { name: { $regex: search as string, $options: "i" } },
         { email: { $regex: search as string, $options: "i" } },
       ];
@@ -248,7 +253,7 @@ export const getuser = catchAsync(
 export const approveUser = catchAsync(
   async (req: Request, res: Response, next: NextFunction) => {
     const { id } = req.params;
-    const { status, assigned_areas, role, name, email, password } = req.body;
+    const { status, assigned_areas, role, idNumber, name, email, password } = req.body;
 
     const user = await userModel.findById(id);
     if (!user) {
@@ -256,6 +261,7 @@ export const approveUser = catchAsync(
     }
 
     const oldData = JSON.stringify({
+      idNumber: user.idNumber,
       status: user.status,
       assigned_areas: user.assigned_areas,
       role: user.role,
@@ -274,6 +280,7 @@ export const approveUser = catchAsync(
     if (role) user.role = role as "user" | "admin";
     
     // Add support for name, email, and password updates
+    if (idNumber) user.idNumber = idNumber;
     if (name) user.name = name;
     if (email) {
       const isEmailExist = await userModel.findOne({ email });
@@ -292,7 +299,7 @@ export const approveUser = catchAsync(
       "users",
       user.id,
       oldData,
-      JSON.stringify({ status, assigned_areas: user.assigned_areas, role, name, email })
+      JSON.stringify({ idNumber, status, assigned_areas: user.assigned_areas, role, name, email })
     );
 
     const updatedUser = await userModel.findById(id).select("-password").populate("assigned_areas", "name");
