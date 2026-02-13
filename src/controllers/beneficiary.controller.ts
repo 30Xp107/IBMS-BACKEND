@@ -14,15 +14,12 @@ import { normalizeArea } from "../utils/normalization";
 const calculateBeneficiaryStatus = (data: any): string => {
   const requiredFields = [
     'hhid',
-    'pkno',
     'first_name',
     'last_name',
     'birthdate',
     'barangay',
     'municipality',
-    'province',
-    'region',
-    'contact'
+    'province'
   ];
 
   const hasAllFields = requiredFields.every(field => {

@@ -44,7 +44,7 @@ export const getDashboardStats = catchAsync(
     const { province, municipality } = req.query;
 
     // Build query based on user's assigned areas
-    let beneficiaryQuery: any = { status: "Active" };
+    let beneficiaryQuery: any = {};
     if (user.role !== "admin" && user.assigned_areas && user.assigned_areas.length > 0) {
       const areaFilter = await getAreaFilter(user.assigned_areas);
       if (areaFilter) {
@@ -355,7 +355,7 @@ export const getRedemptionDashboardStats = catchAsync(
       targetPeriod = await getFrmPeriod();
     }
 
-    let beneficiaryQuery: any = { status: "Active" };
+    let beneficiaryQuery: any = {};
     
     // User's assigned area restrictions
     if (user.role !== "admin" && user.assigned_areas && user.assigned_areas.length > 0) {
@@ -723,7 +723,7 @@ export const getNESDashboardStats = catchAsync(
       targetPeriod = await getFrmPeriod();
     }
 
-    let beneficiaryQuery: any = { status: "Active" };
+    let beneficiaryQuery: any = {};
     
     // User's assigned area restrictions
     if (user.role !== "admin" && user.assigned_areas && user.assigned_areas.length > 0) {
