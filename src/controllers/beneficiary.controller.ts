@@ -1380,20 +1380,44 @@ export const getAvailableFilters = catchAsync(
 );
 
 let isRecalculatingStatus = false;
+let recalculationProgress = {
+  processed: 0,
+  total: 0,
+  updates: 0,
+  is_running: false
+};
+
+export const getRecalculationStatus = catchAsync(
+  async (req: Request, res: Response) => {
+    res.status(200).json(recalculationProgress);
+  }
+);
 
 export const recalculateAllStatuses = catchAsync(
   async (req: Request, res: Response) => {
     if (isRecalculatingStatus) {
       return res.status(409).json({
         message: "A recalculation process is already running in the background.",
-        status: "processing"
+        status: "processing",
+        progress: recalculationProgress
       });
     }
 
+    const totalCount = await Beneficiary.countDocuments({});
+    
+    // Initialize progress
+    recalculationProgress = {
+      processed: 0,
+      total: totalCount,
+      updates: 0,
+      is_running: true
+    };
+
     // Send response immediately to avoid timeout
     res.status(202).json({
-      message: "Recalculation process started in the background. This will take some time for large datasets. You can monitor progress in the Audit Trail.",
-      status: "processing"
+      message: "Recalculation process started in the background. You can monitor the progress here.",
+      status: "processing",
+      total: totalCount
     });
 
     // Run the actual work in the background
@@ -1402,8 +1426,6 @@ export const recalculateAllStatuses = catchAsync(
       try {
         console.log("Starting background status recalculation...");
         const BATCH_SIZE = 1000;
-        let processed = 0;
-        let updates = 0;
         let bulkOps: any[] = [];
 
         // Fields required for calculateBeneficiaryStatus
@@ -1433,18 +1455,18 @@ export const recalculateAllStatuses = catchAsync(
                 update: { $set: { status: newStatus } }
               }
             });
-            updates++;
+            recalculationProgress.updates++;
           }
 
-          processed++;
+          recalculationProgress.processed++;
 
           if (bulkOps.length >= BATCH_SIZE) {
             await Beneficiary.bulkWrite(bulkOps);
             bulkOps = [];
             
             // Log progress every 5000 records
-            if (processed % 5000 === 0) {
-              console.log(`Recalculation progress: ${processed} processed, ${updates} updates so far...`);
+            if (recalculationProgress.processed % 5000 === 0) {
+              console.log(`Recalculation progress: ${recalculationProgress.processed}/${recalculationProgress.total} processed...`);
             }
           }
         }
@@ -1453,7 +1475,7 @@ export const recalculateAllStatuses = catchAsync(
           await Beneficiary.bulkWrite(bulkOps);
         }
 
-        console.log(`Background recalculation finished: ${updates} updated out of ${processed} processed`);
+        console.log(`Background recalculation finished: ${recalculationProgress.updates} updated out of ${recalculationProgress.processed} processed`);
         
         // Log a system audit entry manually since we're in background
         const dummyReq = {
@@ -1462,11 +1484,12 @@ export const recalculateAllStatuses = catchAsync(
           headers: req.headers
         } as any;
         
-        await logAudit(dummyReq, "MAINTENANCE", "system", "all", "", `Background status recalculation complete: ${updates} updated out of ${processed} processed`);
+        await logAudit(dummyReq, "MAINTENANCE", "system", "all", "", `Background status recalculation complete: ${recalculationProgress.updates} updated out of ${recalculationProgress.processed} processed`);
       } catch (error) {
         console.error("Background recalculation error:", error);
       } finally {
         isRecalculatingStatus = false;
+        recalculationProgress.is_running = false;
       }
     };
 
