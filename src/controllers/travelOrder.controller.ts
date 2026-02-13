@@ -103,9 +103,12 @@ export const updateTravelOrderStatus = catchAsync(async (req: Request, res: Resp
     return res.status(404).json({ message: "Travel Order not found" });
   }
 
-  // Only assigned approver can approve/reject
-  if (travelOrder.approver?.toString() !== user._id.toString()) {
-     return res.status(403).json({ message: "Only the assigned approver can update the status" });
+  // Only assigned approver or admin can approve/reject
+  const isApprover = travelOrder.approver?.toString() === user._id.toString();
+  const isAdmin = user.role === 'admin';
+
+  if (!isApprover && !isAdmin) {
+    return res.status(403).json({ message: "Only the assigned signatory or admin can update the status" });
   }
 
   if (!['approved', 'rejected'].includes(status)) {
@@ -116,6 +119,31 @@ export const updateTravelOrderStatus = catchAsync(async (req: Request, res: Resp
   await travelOrder.save();
 
   res.status(200).json(travelOrder);
+});
+
+// Delete Travel Order
+export const deleteTravelOrder = catchAsync(async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const user = (req as any).user;
+
+  const travelOrder = await TravelOrder.findById(id);
+  if (!travelOrder) {
+    return res.status(404).json({ message: "Travel Order not found" });
+  }
+
+  const isRequester = travelOrder.requester.toString() === user._id.toString();
+  const isApprover = travelOrder.approver?.toString() === user._id.toString();
+  const isAdmin = user.role === 'admin';
+
+  // Signatory (approver) and Admin can delete any
+  // Requester can only delete their own
+  if (!isRequester && !isApprover && !isAdmin) {
+    return res.status(403).json({ message: "You are not authorized to delete this travel order" });
+  }
+
+  await TravelOrder.findByIdAndDelete(id);
+
+  res.status(200).json({ message: "Travel order deleted successfully" });
 });
 
 // Assign Approver (Admin only)

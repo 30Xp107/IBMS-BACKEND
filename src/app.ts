@@ -42,9 +42,12 @@ app.use(cors({
       callback(null, true);
     } else {
       console.error('CORS blocked origin:', origin);
-      // Instead of an error, we can call with null, false to let the request fail with a 403
-      // which is cleaner than a 500 error from an unhandled exception
-      callback(null, true); // Temporarily allow all during debugging or use strict check below
+      // In production, be strict. In development, be more flexible.
+      if (process.env.NODE_ENV === 'production') {
+        callback(new Error('Not allowed by CORS'), false);
+      } else {
+        callback(null, true);
+      }
     }
   },
   credentials: true,

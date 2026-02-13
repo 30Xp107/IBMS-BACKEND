@@ -8,7 +8,8 @@ import {
   getUsersForSelection,
   getRegions,
   getProvinces,
-  getMunicipalities
+  getMunicipalities,
+  deleteTravelOrder
 } from '../controllers/travelOrder.controller';
 
 const router = express.Router();
@@ -18,6 +19,9 @@ router.use(protect);
 router.route('/')
   .post(createTravelOrder)
   .get(getTravelOrders);
+
+router.route('/:id')
+  .delete(deleteTravelOrder);
 
 router.patch('/:id/status', updateTravelOrderStatus);
 
