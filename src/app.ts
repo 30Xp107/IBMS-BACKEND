@@ -20,7 +20,23 @@ import { errorHandler } from './middleware/error'
 export const app = express()
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" },
-  crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" }
+  crossOriginOpenerPolicy: { policy: "same-origin-allow-popups" },
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com"],
+      imgSrc: ["'self'", "data:", "https://res.cloudinary.com"],
+      connectSrc: ["'self'", "https://wgp-ibms-r6.onrender.com", "https://*.onrender.com"]
+    }
+  },
+  referrerPolicy: { policy: "strict-origin-when-cross-origin" },
+  hsts: {
+    maxAge: 31536000,
+    includeSubDomains: true,
+    preload: true
+  }
 }))
 const allowedOrigins = [
   process.env.FRONTEND_URL,
@@ -28,15 +44,15 @@ const allowedOrigins = [
   'http://localhost:5173',
 ].filter(Boolean) as string[];
 
-app.use(cors({ 
+app.use(cors({
   origin: (origin, callback) => {
     // Allow requests with no origin (like mobile apps or curl)
     if (!origin) return callback(null, true);
-    
-    const isAllowed = allowedOrigins.some(allowed => origin === allowed) || 
-                     (process.env.NODE_ENV !== 'production') ||
-                     origin.endsWith('.vercel.app') ||
-                     origin.endsWith('.onrender.com'); // Allow all render subdomains
+
+    const isAllowed = allowedOrigins.some(allowed => origin === allowed) ||
+      (process.env.NODE_ENV !== 'production') ||
+      origin.endsWith('.vercel.app') ||
+      origin.endsWith('.onrender.com'); // Allow all render subdomains
 
     if (isAllowed) {
       callback(null, true);

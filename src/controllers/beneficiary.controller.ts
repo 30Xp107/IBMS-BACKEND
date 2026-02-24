@@ -782,6 +782,40 @@ export const getExportData = catchAsync(
       if (r.hhid && r.hhid !== "0" && r.hhid !== "") periodNesMap.set(r.hhid, r);
     });
 
+    // Fetch area codes for PSGC inclusion
+    const regions = await Area.find({ type: "region" }).lean();
+    const regionMap = new Map();
+    regions.forEach(r => regionMap.set(normalizeArea(r.name), { code: r.code, id: r._id.toString() }));
+
+    // To be efficient, we only fetch relevant sub-areas
+    const distinctProvinces = [...new Set(beneficiaries.map(b => normalizeArea(b.province)).filter(Boolean))];
+    const distinctMunicipalities = [...new Set(beneficiaries.map(b => normalizeArea(b.municipality)).filter(Boolean))];
+    const distinctBarangays = [...new Set(beneficiaries.map(b => normalizeArea(b.barangay)).filter(Boolean))];
+
+    const [provinces, municipalities, barangays] = await Promise.all([
+      Area.find({ type: "province", name: { $in: distinctProvinces.map(p => new RegExp(`^${escapeRegex(p)}$`, "i")) } }).lean(),
+      Area.find({ type: "municipality", name: { $in: distinctMunicipalities.map(m => new RegExp(`^${escapeRegex(m)}$`, "i")) } }).lean(),
+      Area.find({ type: "barangay", name: { $in: distinctBarangays.map(b => new RegExp(`^${escapeRegex(b)}$`, "i")) } }).lean()
+    ]);
+
+    const provinceMap = new Map();
+    provinces.forEach(p => {
+      const parentId = p.parent_id?.toString();
+      if (parentId) provinceMap.set(`${parentId}_${normalizeArea(p.name)}`, { code: p.code, id: p._id.toString() });
+    });
+
+    const municipalityMap = new Map();
+    municipalities.forEach(m => {
+      const parentId = m.parent_id?.toString();
+      if (parentId) municipalityMap.set(`${parentId}_${normalizeArea(m.name)}`, { code: m.code, id: m._id.toString() });
+    });
+
+    const barangayMap = new Map();
+    barangays.forEach(b => {
+      const parentId = b.parent_id?.toString();
+      if (parentId) barangayMap.set(`${parentId}_${normalizeArea(b.name)}`, b.code);
+    });
+
     const exportData = beneficiaries.map(b => {
       const id = b._id.toString();
       const hhid = b.hhid;
@@ -801,15 +835,50 @@ export const getExportData = catchAsync(
       const hhidMatchNes = (hhid && hhid !== "0" && hhid !== "") ? periodNesMap.get(hhid) : null;
       const currentNes = periodNesMap.get(id) || hhidMatchNes;
 
+      // Resolve PSGC Codes
+      let regionCode = "";
+      let provinceCode = "";
+      let municipalityCode = "";
+      let barangayCode = "";
+
+      const rName = normalizeArea(b.region);
+      const rData = regionMap.get(rName);
+      if (rData) {
+        regionCode = rData.code;
+        const pName = normalizeArea(b.province);
+        const pData = provinceMap.get(`${rData.id}_${pName}`);
+        if (pData) {
+          provinceCode = pData.code;
+          const mName = normalizeArea(b.municipality);
+          const mData = municipalityMap.get(`${pData.id}_${mName}`);
+          if (mData) {
+            municipalityCode = mData.code;
+            const bName = normalizeArea(b.barangay);
+            barangayCode = barangayMap.get(`${mData.id}_${bName}`) || "";
+          }
+        }
+      }
+
       return {
         "HHID": b.hhid,
+        "PKNO": b.pkno || "",
         "Last Name": b.last_name,
         "First Name": b.first_name,
         "Middle Name": b.middle_name || "",
+        "Name": `${b.first_name} ${b.middle_name ? b.middle_name + ' ' : ''}${b.last_name}`.trim(),
+        "Birthdate": b.birthdate,
+        "Gender": b.gender,
+        "Address": b.address || "",
+        "Contact": b.contact || "",
+        "Is 4Ps": b.is4ps || "No",
         "Region": normalizeArea(b.region),
+        "Region PSGC": regionCode,
         "Province": normalizeArea(b.province),
+        "Province PSGC": provinceCode,
         "Municipality": normalizeArea(b.municipality),
+        "Municipality PSGC": municipalityCode,
         "Barangay": normalizeArea(b.barangay),
+        "Barangay PSGC": barangayCode,
         "Status": b.status,
         "HH Members 0-18": b.num_hh_0_18 || 0,
         "HH Members Pregnant": b.num_hh_pregnant || 0,
@@ -1401,7 +1470,7 @@ export const recalculateAllStatuses = catchAsync(
     }
 
     const totalCount = await Beneficiary.countDocuments({});
-    
+
     // Initialize progress
     recalculationProgress = {
       processed: 0,
@@ -1460,7 +1529,7 @@ export const recalculateAllStatuses = catchAsync(
           if (bulkOps.length >= BATCH_SIZE) {
             await Beneficiary.bulkWrite(bulkOps);
             bulkOps = [];
-            
+
             // Log progress every 5000 records
             if (recalculationProgress.processed % 5000 === 0) {
               console.log(`Recalculation progress: ${recalculationProgress.processed}/${recalculationProgress.total} processed...`);
@@ -1473,14 +1542,14 @@ export const recalculateAllStatuses = catchAsync(
         }
 
         console.log(`Background recalculation finished: ${recalculationProgress.updates} updated out of ${recalculationProgress.processed} processed`);
-        
+
         // Log a system audit entry manually since we're in background
         const dummyReq = {
           user: (req as any).user,
           ip: req.ip,
           headers: req.headers
         } as any;
-        
+
         await logAudit(dummyReq, "MAINTENANCE", "system", "all", "", `Background status recalculation complete: ${recalculationProgress.updates} updated out of ${recalculationProgress.processed} processed`);
       } catch (error) {
         console.error("Background recalculation error:", error);
